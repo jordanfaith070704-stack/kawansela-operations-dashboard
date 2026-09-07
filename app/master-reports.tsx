@@ -72,7 +72,7 @@ export function MasterReports() {
                   <small>{row.locations?.code ?? "Master"}</small>
                 </div>
                 <time dateTime={row.created_at}>
-                  {new Date(row.created_at).toLocaleString("id-ID")}
+                  {new Date(row.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}
                 </time>
               </div>
             ))}

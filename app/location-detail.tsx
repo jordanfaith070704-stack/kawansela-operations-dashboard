@@ -257,7 +257,7 @@ export function LocationDetail({
           <strong>{loading ? "—" : posLabel}</strong>
           <small>
             {connection?.last_successful_sync_at
-              ? `Sinkronisasi ${new Date(connection.last_successful_sync_at).toLocaleString("id-ID")}`
+              ? `Sinkronisasi ${new Date(connection.last_successful_sync_at).toLocaleString("id-ID", { timeZone: location.timezone })}`
               : "Belum ada sinkronisasi"}
           </small>
         </article>

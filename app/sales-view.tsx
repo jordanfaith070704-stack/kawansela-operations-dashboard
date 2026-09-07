@@ -57,6 +57,20 @@ function periodStart(period: Period, timeZone: string) {
   return new Date(Date.UTC(year, month, day, -offsetHours));
 }
 
+function safeDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatSaleTime(value: string, period: Period, timeZone: string) {
+  const date = safeDate(value);
+  if (!date) return "—";
+  return period === "day"
+    ? date.toLocaleTimeString("id-ID", { timeZone, hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleString("id-ID", { timeZone, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function SalesView({
   locationId,
   master = false,
@@ -73,6 +87,7 @@ export function SalesView({
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [period, setPeriod] = useState<Period>("day");
   const [rollups, setRollups] = useState<Rollup[]>([]);
+  const [displayTimeZone, setDisplayTimeZone] = useState("Asia/Jakarta");
   const lastUpdatedRef = useRef<Date | null>(null);
   const inFlightRef = useRef(false);
   const load = useCallback(async (quiet = false) => {
@@ -91,6 +106,7 @@ export function SalesView({
         .maybeSingle();
       reportTimeZone = location?.timezone ?? reportTimeZone;
     }
+    setDisplayTimeZone(reportTimeZone);
     const start = periodStart(period, reportTimeZone);
     let query = db
       .from("sales")
@@ -191,11 +207,12 @@ export function SalesView({
     return () => window.clearInterval(interval);
   }, [load]);
 
-  const syncLabel = lastSyncAt
-    ? `Terakhir sinkronisasi ${new Date(lastSyncAt).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+  const lastSyncDate = safeDate(lastSyncAt);
+  const syncLabel = lastSyncDate
+    ? `Terakhir sinkronisasi ${lastSyncDate.toLocaleTimeString("id-ID", { timeZone: displayTimeZone, hour: "2-digit", minute: "2-digit" })}`
     : "Belum ada sinkronisasi berhasil";
   const refreshLabel = lastUpdatedAt
-    ? `Diperbarui ${lastUpdatedAt.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+    ? `Diperbarui ${lastUpdatedAt.toLocaleTimeString("id-ID", { timeZone: displayTimeZone, hour: "2-digit", minute: "2-digit" })}`
     : "Belum diperbarui";
   const summary = useMemo(
     () =>
@@ -215,13 +232,13 @@ export function SalesView({
     () => rollups.map((row) => ({
       label: period === "day"
         ? `${row.bucket.slice(11, 13)}.00`
-        : new Date(`${row.bucket}T00:00:00`).toLocaleDateString("id-ID", {
-            day: "2-digit",
-            month: "short",
-          }),
+        : (() => {
+            const date = safeDate(row.bucket.includes("T") ? row.bucket : `${row.bucket}T00:00:00`);
+            return date ? date.toLocaleDateString("id-ID", { timeZone: displayTimeZone, day: "2-digit", month: "short" }) : "—";
+          })(),
       value: row.revenue,
     })),
-    [period, rollups],
+    [displayTimeZone, period, rollups],
   );
   const max = Math.max(1, ...chart.map((entry) => entry.value));
   const periodLabel = period === "day" ? "hari ini" : period === "week" ? "7 hari" : "bulan ini";
@@ -340,17 +357,7 @@ export function SalesView({
               {rows.map((row) => (
                 <tr key={row.id}>
                   <td>
-                    {period === "day"
-                      ? new Date(row.occurred_at).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : new Date(row.occurred_at).toLocaleString("id-ID", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                    {formatSaleTime(row.occurred_at, period, displayTimeZone)}
                   </td>
                   {master ? <td>{row.locations?.code ?? "—"}</td> : null}
                   <td>{row.recipes?.name ?? "Produk"}</td>

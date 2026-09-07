@@ -137,7 +137,7 @@ export function MasterOverview() {
                     </span>
                     <small>
                       {connection?.last_successful_sync_at
-                        ? `Diperbarui ${new Date(connection.last_successful_sync_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`
+                        ? `Diperbarui ${new Date(connection.last_successful_sync_at).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" })}`
                         : "Belum ada sinkronisasi"}
                     </small>
                   </div>
