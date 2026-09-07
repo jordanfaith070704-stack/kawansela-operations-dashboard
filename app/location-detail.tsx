@@ -156,19 +156,31 @@ export function LocationDetail({
   useEffect(() => {
     const sync = async () => {
       try {
-        const response = await fetch("/api/loyverse/sync", {
+        await fetch("/api/loyverse/sync", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ locationId: location.id }),
         });
-        if (response.ok) await load();
       } catch {
         // The connection status already exposes the last real provider error.
+      } finally {
+        // Operator actions are stored independently from Loyverse. Always
+        // refresh Master data even while the POS provider is unavailable.
+        await load();
       }
     };
     void sync();
-    const interval = window.setInterval(() => void sync(), 45_000);
-    return () => window.clearInterval(interval);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void sync();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void sync();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load, location.id]);
 
   const lowStock = useMemo(
