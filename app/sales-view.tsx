@@ -71,6 +71,34 @@ function formatSaleTime(value: string, period: Period, timeZone: string) {
     : date.toLocaleString("id-ID", { timeZone, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function fallbackRollups(rows: Sale[], period: Period, timeZone: string): Rollup[] {
+  const groups = new Map<string, Rollup>();
+  for (const sale of rows) {
+    const date = safeDate(sale.occurred_at);
+    if (!date) continue;
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        ...(period === "day" ? { hour: "2-digit", hourCycle: "h23" } : {}),
+      }).formatToParts(date).map((part) => [part.type, part.value]),
+    );
+    const bucket = period === "day"
+      ? `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:00:00`
+      : `${parts.year}-${parts.month}-${parts.day}`;
+    const entry = groups.get(bucket) ?? { bucket, revenue: 0, cogs: 0, cups: 0, cash: 0, qris: 0 };
+    entry.revenue += Number(sale.total);
+    entry.cogs += Number(sale.cogs);
+    entry.cups += Number(sale.quantity);
+    if (sale.payment_method === "cash") entry.cash += Number(sale.total);
+    if (sale.payment_method === "qris_static" || sale.payment_method === "qris_provider") entry.qris += Number(sale.total);
+    groups.set(bucket, entry);
+  }
+  return [...groups.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
 export function SalesView({
   locationId,
   master = false,
@@ -151,24 +179,25 @@ export function SalesView({
       db.rpc("get_pos_health", { p_location_id: locationId }),
       db.rpc("get_sales_rollup", { p_location_id: locationId, p_period: period }),
     ]);
-    if (salesResult.error || rollupResult.error) {
+    if (salesResult.error) {
       setError(
         lastUpdatedRef.current
           ? "Pembaruan penjualan gagal. Tampilan ini memakai data terakhir."
           : "Penjualan tidak dapat dimuat. Data ini mungkin belum terbaru.",
       );
     } else {
-      setRows((salesResult.data ?? []) as unknown as Sale[]);
-      setRollups(
-        ((rollupResult.data ?? []) as Rollup[]).map((row) => ({
+      const salesRows = (salesResult.data ?? []) as unknown as Sale[];
+      setRows(salesRows);
+      setRollups(rollupResult.error
+        ? fallbackRollups(salesRows, period, reportTimeZone)
+        : ((rollupResult.data ?? []) as Rollup[]).map((row) => ({
           ...row,
           revenue: Number(row.revenue),
           cogs: Number(row.cogs),
           cups: Number(row.cups),
           cash: Number(row.cash),
           qris: Number(row.qris),
-        })),
-      );
+        })));
       const updatedAt = new Date();
       lastUpdatedRef.current = updatedAt;
       setLastUpdatedAt(updatedAt);
