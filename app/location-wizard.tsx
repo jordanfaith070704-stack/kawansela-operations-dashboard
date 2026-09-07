@@ -160,7 +160,7 @@ export function LocationWizard() {
           locationId: created.id,
           accessToken: form.get("accessToken"),
         }),
-      });
+      }, 45000);
       if (!response.ok) {
         setError(errorText[body.error ?? ""] ?? "Koneksi belum dapat disimpan.");
         return;

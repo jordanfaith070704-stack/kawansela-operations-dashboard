@@ -9,6 +9,11 @@ import {
 
 const LOYVERSE_API = "https://api.loyverse.com/v1.0";
 
+// Store and catalogue lookups can take longer than a normal UI request.
+// The browser waits 45 seconds; this gives the server enough headroom to
+// complete the two independent Loyverse calls and return a single response.
+export const maxDuration = 60;
+
 async function requireMaster() {
   const db = await createClient();
   const {
