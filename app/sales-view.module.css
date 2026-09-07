@@ -137,6 +137,43 @@
   font-size: 12px;
 }
 .mixRow strong{font-size:11px;font-weight:600;color:#555;text-align:right}
+.recapGrid { display:grid; grid-template-columns:1.25fr .75fr; gap:14px; }
+.recapEmpty { margin-top:12px; padding:18px 0; color:#777; font-size:12px; }
+.productRecapBody { display:grid; grid-template-columns:145px minmax(0,1fr); gap:20px; align-items:center; margin-top:14px; }
+.donut { width:132px; aspect-ratio:1; border-radius:50%; display:grid; place-items:center; }
+.donut > div { width:76px; aspect-ratio:1; border-radius:50%; display:grid; place-content:center; text-align:center; background:#fff; box-shadow:0 0 0 1px #ecece8; }
+.donut strong { display:block; font:500 24px Georgia,serif; font-variant-numeric:tabular-nums; }
+.donut span { display:block; margin-top:2px; color:#777; font-size:8px; font-weight:800; letter-spacing:.08em; }
+.productList { min-width:0; }
+.productRow { display:grid; grid-template-columns:24px minmax(0,1fr) 38px; gap:10px; align-items:center; padding:10px 0; border-top:1px solid #ecece8; }
+.productRank { display:grid; place-items:center; width:22px; height:22px; border:1px solid #d8d8d2; border-radius:50%; color:#666; font-size:10px; font-weight:800; }
+.productDot { justify-self:center; width:9px; height:9px; border-radius:50%; }
+.productInfo { min-width:0; }
+.productInfo > div:first-child { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+.productInfo strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.productInfo span { flex:none; color:#6f6f6a; font-size:10px; }
+.productTrack { height:4px; margin-top:7px; overflow:hidden; border-radius:99px; background:#ecece8; }
+.productTrack span { display:block; height:100%; max-width:100%; border-radius:inherit; background:#111; }
+.productRow > b { color:#555; text-align:right; font-size:11px; font-variant-numeric:tabular-nums; }
+.trendList { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:15px; }
+.trendList > div { min-width:0; border:1px solid #e5e5e0; border-radius:10px; padding:13px; background:#fafaf8; }
+.trendList span { display:block; color:#777; font-size:9px; font-weight:800; letter-spacing:.07em; }
+.trendList strong { display:block; margin:7px 0 4px; font:500 22px Georgia,serif; font-variant-numeric:tabular-nums; }
+.trendList small { display:block; color:#777; font-size:10px; line-height:1.35; }
+.trendUp { color:#111; }
+.trendDown { color:#777; }
+.cartList { margin-top:12px; }
+.cartRow { display:grid; grid-template-columns:24px minmax(180px,1fr) 135px 130px; gap:12px; align-items:center; padding:12px 0; border-top:1px solid #ecece8; }
+.cartInfo { min-width:0; }
+.cartInfo > div:first-child { display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+.cartInfo strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.cartInfo > div > span { flex:none; color:#777; font-size:10px; }
+.cartRevenue { text-align:right; }
+.cartRevenue strong { display:block; font-size:12px; font-variant-numeric:tabular-nums; }
+.cartRevenue small { display:block; margin-top:3px; color:#777; font-size:9px; }
+.performanceStatus { justify-self:end; border:1px solid #111; border-radius:999px; padding:5px 8px; font-size:9px; font-weight:800; white-space:nowrap; }
+.performanceLow { border-color:#d5d5d0; background:#f2f2ef; color:#666; }
+.cartSummary { padding:11px 0 3px 34px; border-top:1px solid #ecece8; color:#777; font-size:10px; }
 @media (max-width: 850px) {
   .metrics {
     grid-template-columns: 1fr 1fr;
@@ -144,6 +181,9 @@
   .grid {
     grid-template-columns: 1fr;
   }
+  .recapGrid { grid-template-columns:1fr; }
+  .cartRow { grid-template-columns:24px minmax(0,1fr) 120px; }
+  .performanceStatus { grid-column:2 / -1; justify-self:start; }
 }
 @media (max-width: 520px) {
   .metrics {
@@ -165,6 +205,15 @@
   .bar { width:28px; }
   .chartEmpty { min-height:175px; }
   .chartHead { align-items:center; }
+  .productInfo > div:first-child { display:block; }
+  .productInfo span { display:block; margin-top:3px; }
+  .productRecapBody { grid-template-columns:1fr; gap:10px; }
+  .donut { width:118px; margin:2px auto 8px; }
+  .cartRow { grid-template-columns:24px minmax(0,1fr); gap:9px; }
+  .cartRevenue { grid-column:2; text-align:left; }
+  .performanceStatus { grid-column:2; }
+  .cartInfo > div:first-child { display:block; }
+  .cartInfo > div > span { display:block; margin-top:3px; }
 }
 @media (max-width:520px){.liveBar{flex-wrap:wrap}.liveBar small{width:calc(100% - 14px);margin-left:14px}.liveBar button{margin-left:auto}}
 

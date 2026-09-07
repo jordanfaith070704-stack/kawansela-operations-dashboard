@@ -28,6 +28,22 @@ type Rollup = {
   cash: number;
   qris: number;
 };
+type ProductRecap = {
+  product_name: string;
+  cups: number;
+  revenue: number;
+  previous_cups: number;
+  previous_revenue: number;
+};
+type CartPerformance = {
+  location_id: string;
+  location_code: string;
+  location_name: string;
+  cups: number;
+  revenue: number;
+  previous_revenue: number;
+  active_days: number;
+};
 const money = new Intl.NumberFormat("id-ID", {
   style: "currency",
   currency: "IDR",
@@ -124,12 +140,15 @@ export function SalesView({
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [period, setPeriod] = useState<Period>("day");
   const [rollups, setRollups] = useState<Rollup[]>([]);
+  const [productRecap, setProductRecap] = useState<ProductRecap[]>([]);
+  const [recapError, setRecapError] = useState(false);
+  const [cartPerformance, setCartPerformance] = useState<CartPerformance[]>([]);
+  const [cartPerformanceError, setCartPerformanceError] = useState(false);
   const [displayTimeZone, setDisplayTimeZone] = useState("Asia/Jakarta");
   const lastUpdatedRef = useRef<Date | null>(null);
-  const inFlightRef = useRef(false);
+  const requestIdRef = useRef(0);
   const load = useCallback(async (quiet = false) => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
+    const requestId = ++requestIdRef.current;
     if (quiet) setRefreshing(true);
     else setLoading(true);
     setError("");
@@ -143,6 +162,7 @@ export function SalesView({
         .maybeSingle();
       reportTimeZone = location?.timezone ?? reportTimeZone;
     }
+    if (requestId !== requestIdRef.current) return;
     setDisplayTimeZone(reportTimeZone);
     const start = periodStart(period, reportTimeZone);
     let query = db
@@ -180,11 +200,18 @@ export function SalesView({
         body: JSON.stringify({ locationId }),
       });
     }
-    const [salesResult, healthResult, rollupResult] = await Promise.all([
+    const [salesResult, healthResult, rollupResult, productResult, cartPerformanceResult] = await Promise.all([
       query,
       db.rpc("get_pos_health", { p_location_id: locationId }),
       db.rpc("get_sales_rollup", { p_location_id: locationId, p_period: period }),
+      period === "day"
+        ? Promise.resolve({ data: [], error: null })
+        : db.rpc("get_sales_product_recap", { p_location_id: locationId, p_period: period }),
+      period === "day" || !master
+        ? Promise.resolve({ data: [], error: null })
+        : db.rpc("get_cart_sales_performance", { p_period: period }),
     ]);
+    if (requestId !== requestIdRef.current) return;
     if (salesResult.error) {
       setError(
         lastUpdatedRef.current
@@ -204,6 +231,30 @@ export function SalesView({
           cash: Number(row.cash),
           qris: Number(row.qris),
         })));
+      setProductRecap(
+        productResult.error
+          ? []
+          : ((productResult.data ?? []) as ProductRecap[]).map((row) => ({
+              ...row,
+              cups: Number(row.cups),
+              revenue: Number(row.revenue),
+              previous_cups: Number(row.previous_cups),
+              previous_revenue: Number(row.previous_revenue),
+            })),
+      );
+      setRecapError(Boolean(productResult.error));
+      setCartPerformance(
+        cartPerformanceResult.error
+          ? []
+          : ((cartPerformanceResult.data ?? []) as CartPerformance[]).map((row) => ({
+              ...row,
+              cups: Number(row.cups),
+              revenue: Number(row.revenue),
+              previous_revenue: Number(row.previous_revenue),
+              active_days: Number(row.active_days),
+            })),
+      );
+      setCartPerformanceError(Boolean(cartPerformanceResult.error));
       const updatedAt = new Date();
       lastUpdatedRef.current = updatedAt;
       setLastUpdatedAt(updatedAt);
@@ -227,24 +278,26 @@ export function SalesView({
       );
     }
     } catch {
+      if (requestId !== requestIdRef.current) return;
       setError(
         lastUpdatedRef.current
           ? "Pembaruan penjualan gagal. Tampilan ini memakai data terakhir."
           : "Penjualan tidak dapat dimuat. Data ini mungkin belum terbaru.",
       );
     } finally {
-      inFlightRef.current = false;
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [autoSync, locationId, master, period]);
   useEffect(() => {
     void load();
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void load(true);
-    }, 15_000);
+    }, period === "day" ? 15_000 : 60_000);
     return () => window.clearInterval(interval);
-  }, [load]);
+  }, [load, period]);
 
   const lastSyncDate = safeDate(lastSyncAt);
   const syncLabel = lastSyncDate
@@ -282,6 +335,42 @@ export function SalesView({
   );
   const max = Math.max(1, ...chart.map((entry) => entry.value));
   const periodLabel = period === "day" ? "hari ini" : period === "week" ? "7 hari" : "bulan ini";
+  const topProducts = productRecap.filter((product) => product.cups > 0).slice(0, 5);
+  const currentProductCups = productRecap.reduce((total, product) => total + product.cups, 0);
+  const currentProductRevenue = productRecap.reduce((total, product) => total + product.revenue, 0);
+  const previousRevenue = productRecap.reduce((total, product) => total + product.previous_revenue, 0);
+  const revenueTrend = previousRevenue > 0
+    ? ((currentProductRevenue - previousRevenue) / previousRevenue) * 100
+    : currentProductRevenue > 0 ? null : 0;
+  const bestDay = period === "day" || !chart.length
+    ? null
+    : chart.reduce((best, entry) => entry.value > best.value ? entry : best, chart[0]);
+  const minimumActiveDays = period === "week" ? 2 : 5;
+  const qualifiedCartDailyRevenue = cartPerformance
+    .filter((cart) => cart.active_days >= minimumActiveDays)
+    .map((cart) => cart.revenue / cart.active_days)
+    .sort((a, b) => a - b);
+  const medianCartDailyRevenue = qualifiedCartDailyRevenue.length
+    ? qualifiedCartDailyRevenue.length % 2
+      ? qualifiedCartDailyRevenue[Math.floor(qualifiedCartDailyRevenue.length / 2)]
+      : (qualifiedCartDailyRevenue[qualifiedCartDailyRevenue.length / 2 - 1] + qualifiedCartDailyRevenue[qualifiedCartDailyRevenue.length / 2]) / 2
+    : 0;
+  const maxCartRevenue = Math.max(1, ...cartPerformance.map((cart) => cart.revenue));
+  const visibleCartPerformance = cartPerformance.length <= 6
+    ? cartPerformance
+    : [...cartPerformance.slice(0, 3), ...cartPerformance.slice(-3)];
+  const productPalette = ["#111", "#4c4c48", "#777771", "#a4a49d", "#c9c9c1"];
+  let productShareCursor = 0;
+  const productDonut = topProducts.length
+    ? `conic-gradient(${[
+        ...topProducts.map((product, index) => {
+          const start = productShareCursor;
+          productShareCursor += currentProductCups ? (product.cups / currentProductCups) * 100 : 0;
+          return `${productPalette[index]} ${start}% ${productShareCursor}%`;
+        }),
+        `#ecece8 ${productShareCursor}% 100%`,
+      ].join(", ")})`
+    : "#ecece8";
   return (
     <div className={styles.wrap}>
       {error ? (
@@ -400,6 +489,118 @@ export function SalesView({
           </div>
         </article>
       </section>
+      {period !== "day" ? (
+        <section className={styles.recapGrid}>
+          <article className={styles.panel}>
+            <div className={styles.chartHead}>
+              <div>
+                <h2>Produk terlaris</h2>
+                <div className={styles.sub}>Berdasarkan jumlah cup · {periodLabel}</div>
+              </div>
+              {topProducts.length ? <span className={styles.chartCount}>{topProducts.length} PRODUK</span> : null}
+            </div>
+            {loading ? (
+              <div className={styles.recapEmpty}>Memuat produk…</div>
+            ) : recapError ? (
+              <div className={styles.recapEmpty}>Recap produk belum dapat dimuat.</div>
+            ) : topProducts.length ? (
+              <div className={styles.productRecapBody}>
+                <div
+                  className={styles.donut}
+                  style={{ background: productDonut }}
+                  role="img"
+                  aria-label={`Komposisi ${topProducts.map((product) => `${product.product_name} ${product.cups} cup`).join(", ")}`}
+                >
+                  <div><strong>{currentProductCups}</strong><span>CUP BERSIH</span></div>
+                </div>
+                <div className={styles.productList}>
+                  {topProducts.map((product, index) => {
+                    const share = currentProductCups ? (product.cups / currentProductCups) * 100 : 0;
+                    return (
+                      <div className={styles.productRow} key={product.product_name}>
+                        <span className={styles.productDot} style={{ background: productPalette[index] }} />
+                        <div className={styles.productInfo}>
+                          <div><strong>{product.product_name}</strong><span>{product.cups} cup · {money.format(product.revenue)}</span></div>
+                          <div className={styles.productTrack}><span style={{ width: `${share}%` }} /></div>
+                        </div>
+                        <b>{share.toFixed(0)}%</b>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className={styles.recapEmpty}>Belum ada produk terjual untuk {periodLabel}.</div>
+            )}
+          </article>
+          <article className={styles.panel}>
+            <h2>Ringkasan tren</h2>
+            <div className={styles.sub}>Dibanding periode sebelumnya pada durasi yang sama.</div>
+            <div className={styles.trendList}>
+              <div>
+                <span>PERUBAHAN OMZET</span>
+                <strong className={revenueTrend !== null && revenueTrend < 0 ? styles.trendDown : styles.trendUp}>
+                  {loading ? "—" : revenueTrend === null ? "Baru" : `${revenueTrend >= 0 ? "+" : ""}${revenueTrend.toFixed(0)}%`}
+                </strong>
+                <small>Omzet bersih sebelumnya {money.format(previousRevenue)}</small>
+              </div>
+              <div>
+                <span>HARI TERBAIK</span>
+                <strong>{loading ? "—" : bestDay?.label ?? "Belum ada"}</strong>
+                <small>{bestDay ? `${bestDay.cups} cup · ${money.format(bestDay.value)}` : "Menunggu transaksi"}</small>
+              </div>
+            </div>
+          </article>
+        </section>
+      ) : null}
+      {master && period !== "day" ? (
+        <article className={styles.panel}>
+          <div className={styles.chartHead}>
+            <div>
+              <h2>Performa cart</h2>
+              <div className={styles.sub}>Perbandingan seluruh cart aktif · {periodLabel}</div>
+            </div>
+            {!loading && qualifiedCartDailyRevenue.length ? <span className={styles.chartCount}>MEDIAN/HARI {compactMoney.format(medianCartDailyRevenue)}</span> : null}
+          </div>
+          {loading ? (
+            <div className={styles.recapEmpty}>Memuat performa cart…</div>
+          ) : cartPerformanceError ? (
+            <div className={styles.recapEmpty}>Performa cart belum dapat dimuat.</div>
+          ) : cartPerformance.length ? (
+            <div className={styles.cartList}>
+              {visibleCartPerformance.map((cart) => {
+                const rank = cartPerformance.findIndex((item) => item.location_id === cart.location_id) + 1;
+                const dailyRevenue = cart.active_days ? cart.revenue / cart.active_days : 0;
+                const comparedToMedian = medianCartDailyRevenue ? dailyRevenue / medianCartDailyRevenue : 0;
+                const status = cart.active_days < minimumActiveDays
+                  ? "Data belum cukup"
+                  : comparedToMedian >= 1.2
+                    ? "Di atas median"
+                    : comparedToMedian < 0.7
+                      ? "Perlu perhatian"
+                      : "Stabil";
+                const trend = cart.previous_revenue > 0
+                  ? ((cart.revenue - cart.previous_revenue) / cart.previous_revenue) * 100
+                  : cart.revenue > 0 ? null : 0;
+                return (
+                  <div className={styles.cartRow} key={cart.location_id}>
+                    <span className={styles.productRank}>{rank}</span>
+                    <div className={styles.cartInfo}>
+                      <div><strong>{cart.location_code} · {cart.location_name}</strong><span>{cart.cups} cup</span></div>
+                      <div className={styles.productTrack}><span style={{ width: `${(cart.revenue / maxCartRevenue) * 100}%` }} /></div>
+                    </div>
+                    <div className={styles.cartRevenue}><strong>{money.format(cart.revenue)}</strong><small>{cart.active_days} hari aktif · {trend === null ? "baru" : `${trend >= 0 ? "+" : ""}${trend.toFixed(0)}%`}</small></div>
+                    <span className={`${styles.performanceStatus} ${status === "Perlu perhatian" || status === "Data belum cukup" ? styles.performanceLow : ""}`}>{status}</span>
+                  </div>
+                );
+              })}
+              {cartPerformance.length > 6 ? <div className={styles.cartSummary}>Menampilkan 3 cart teratas dan 3 cart terbawah dari {cartPerformance.length} cart aktif.</div> : null}
+            </div>
+          ) : (
+            <div className={styles.recapEmpty}>Belum ada cart aktif untuk dibandingkan.</div>
+          )}
+        </article>
+      ) : null}
       <article className={styles.panel}>
         <h2>{master ? "Transaksi seluruh lokasi" : "Transaksi terbaru"} · {periodLabel}</h2>
         <div className={styles.tableWrap}>
