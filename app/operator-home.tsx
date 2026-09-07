@@ -19,6 +19,11 @@ const rupiah = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
 });
 
+function jakartaStartOfToday() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), -7));
+}
+
 export function OperatorHome({ locationId }: Props) {
   const [sales, setSales] = useState({ cups: 0, revenue: 0 });
   const [batches, setBatches] = useState<Batch[]>([]);
@@ -32,8 +37,7 @@ export function OperatorHome({ locationId }: Props) {
     void (async () => {
       setLoading(true);
       setError("");
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
+      const start = jakartaStartOfToday();
       const db = createClient();
       const [salesResult, batchesResult, healthResult] = await Promise.all([
         db
@@ -166,7 +170,7 @@ export function OperatorHome({ locationId }: Props) {
                   <small>
                     {index === 0
                       ? "Gunakan lebih dulu"
-                      : `Dibuat ${new Date(batch.produced_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}`}
+                      : `Dibuat ${new Date(batch.produced_at).toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit" })} WIB`}
                   </small>
                 </div>
                 <div className={styles.quantity}>
