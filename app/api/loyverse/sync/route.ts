@@ -186,15 +186,26 @@ export async function POST(request: NextRequest) {
     );
     const result = await processLoyverseReceipts(connection.id, receipts);
     return NextResponse.json({ status: "synced", processed: result.processed, pending: result.pending });
-  } catch {
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : "unknown_error";
+    const detail = cause.includes("credential")
+      ? "Kredensial Loyverse tidak dapat dibaca. Simpan ulang token koneksi."
+      : cause.includes("HTTP 401") || cause.includes("HTTP 403")
+        ? "Token Loyverse ditolak. Simpan ulang token koneksi."
+        : cause.includes("HTTP 429")
+          ? "Loyverse membatasi permintaan sementara. Sistem akan mencoba lagi."
+          : cause.includes("timeout")
+            ? "Loyverse tidak merespons tepat waktu. Sistem akan mencoba lagi."
+            : `Sinkronisasi Loyverse gagal: ${cause.slice(0, 180)}`;
+    console.error("Loyverse sync failed", { connectionId: connection.id, cause });
     await admin
       .from("pos_connections")
       .update({
         status: "error",
         last_attempt_at: new Date().toISOString(),
-        last_error: "Sinkronisasi Loyverse gagal. Coba lagi beberapa saat.",
+        last_error: detail,
       })
       .eq("id", connection.id);
-    return NextResponse.json({ error: "sync_failed" }, { status: 502 });
+    return NextResponse.json({ error: "sync_failed", detail }, { status: 502 });
   }
 }
