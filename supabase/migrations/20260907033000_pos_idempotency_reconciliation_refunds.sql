@@ -29,7 +29,9 @@ declare
   v_location_id uuid; v_sale uuid; v_left integer := p_quantity*150; v_take integer;
   v_batch record; v_cogs numeric(14,2) := 0; v_pack record; v_pack_count integer := 0;
 begin
-  if not app.is_service_role() then raise exception 'not authorized'; end if;
+  -- The function is callable only by service_role (GRANT is revoked from all
+  -- browser roles below). Checking a request JWT inside SECURITY DEFINER made
+  -- genuine server-side Loyverse imports fail on some Supabase runtimes.
   if p_quantity <= 0 or p_total < 0 or coalesce(trim(p_external_id),'')='' then raise exception 'invalid sale'; end if;
   select location_id into v_location_id from public.pos_connections
     where id=p_pos_connection_id and provider='loyverse' and is_active for share;
