@@ -151,7 +151,8 @@ export function LocationWizard() {
     if (!created) return;
     setPending(true);
     setError("");
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const { response, body } = await fetchJson<{ error?: string; connectionId?: string; stores?: External[]; items?: External[]; suggestedStoreId?: string; suggestedMappings?: Record<string, string> }>("/api/admin/pos-connections", {
         method: "POST",
@@ -174,7 +175,7 @@ export function LocationWizard() {
       const suggestedStoreId = body.suggestedStoreId ?? "";
       setMappings(suggestedMappings);
       setStoreId(suggestedStoreId);
-      event.currentTarget.reset();
+      formElement.reset();
       const canReuseConfiguration =
         replacingConnection &&
         Boolean(suggestedStoreId) &&
