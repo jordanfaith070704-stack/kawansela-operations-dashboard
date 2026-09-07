@@ -143,7 +143,16 @@ export function LocationWizard() {
         Boolean(body.suggestedStoreId) &&
         recipes.length > 0 &&
         recipes.every((recipe) => resumedMappings[recipe.id]);
-      setStep(readyForTest ? 4 : 2);
+      if (readyForTest && body.suggestedStoreId) {
+        await activateConnection(
+          body.connectionId,
+          body.suggestedStoreId,
+          resumedMappings,
+          location,
+        );
+      } else {
+        setStep(2);
+      }
     } finally {
       setPending(false);
     }
@@ -238,33 +247,51 @@ export function LocationWizard() {
       setPending(false);
     }
   }
-  async function testAndActivate() {
-    if (!created || !connectionId || !storeId) return;
+  async function activateConnection(
+    candidateConnectionId: string,
+    selectedStoreId: string,
+    selectedMappings: Record<string, string>,
+    targetLocation: Location | null = created,
+  ) {
+    if (!targetLocation || !candidateConnectionId || !selectedStoreId) return false;
     setPending(true);
     setError("");
     const productMappings = recipes
-      .map((recipe) => ({ recipeId: recipe.id, itemId: mappings[recipe.id] }))
+      .map((recipe) => ({ recipeId: recipe.id, itemId: selectedMappings[recipe.id] }))
       .filter((mapping) => mapping.itemId);
     try {
       const { response, body } = await fetchJson<{ error?: string }>("/api/admin/pos-connections", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ connectionId, storeId, mappings: productMappings }),
+        body: JSON.stringify({
+          connectionId: candidateConnectionId,
+          storeId: selectedStoreId,
+          mappings: productMappings,
+        }),
       });
       if (!response.ok) {
         setError(
           errorText[body.error ?? ""] ??
             "Pengujian belum lulus. Periksa gerai dan pemetaan produk.",
         );
-        return;
+        return false;
       }
+      setConnectionId(candidateConnectionId);
+      setStoreId(selectedStoreId);
+      setMappings(selectedMappings);
       setStep(5);
       await load();
+      return true;
     } catch {
       setError("Pengujian terlalu lama. Coba lagi beberapa saat.");
+      return false;
     } finally {
       setPending(false);
     }
+  }
+
+  async function testAndActivate() {
+    await activateConnection(connectionId, storeId, mappings);
   }
 
   return (
