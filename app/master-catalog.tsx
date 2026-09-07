@@ -159,7 +159,6 @@ export function MasterCatalog({
 
   useEffect(() => {
     if (!selectedRecipe || !selectedVersion) return;
-    setEditingRecipeName(false);
     setDraft({
       name: selectedRecipe.name,
       price: String(selectedRecipe.selling_price),
@@ -203,6 +202,12 @@ export function MasterCatalog({
       ...current,
       quantities: { ...current.quantities, [itemId]: value },
     }));
+  }
+
+  function beginRecipeNameEdit(recipe: Recipe) {
+    setSelectedRecipeId(recipe.id);
+    setDraft((current) => ({ ...current, name: recipe.name }));
+    setEditingRecipeName(true);
   }
 
   async function publish(event: FormEvent<HTMLFormElement>) {
@@ -558,22 +563,33 @@ export function MasterCatalog({
               <span>Terbitkan versi pertama</span>
             </button>
             {recipes.map((recipe) => (
-              <button
-                key={recipe.id}
-                type="button"
-                onClick={() => setSelectedRecipeId(recipe.id)}
-                className={
-                  recipe.id === selectedRecipe?.id
-                    ? styles.recipeActive
-                    : styles.recipeButton
-                }
-              >
-                <strong>{recipe.name}</strong>
-                <span>
-                  {money.format(recipeCosts(recipe).cup)} COGS/cup
-                </span>
-                <small>{money.format(Number(recipe.selling_price))} · margin {number.format(recipeCosts(recipe).margin)}%</small>
-              </button>
+              <div className={styles.recipeCard} key={recipe.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingRecipeName(false);
+                    setSelectedRecipeId(recipe.id);
+                  }}
+                  className={
+                    recipe.id === selectedRecipe?.id
+                      ? styles.recipeActive
+                      : styles.recipeButton
+                  }
+                >
+                  <strong>{recipe.name}</strong>
+                  <span>
+                    {money.format(recipeCosts(recipe).cup)} COGS/cup
+                  </span>
+                  <small>{money.format(Number(recipe.selling_price))} · margin {number.format(recipeCosts(recipe).margin)}%</small>
+                </button>
+                <button
+                  type="button"
+                  className={styles.recipeQuickEdit}
+                  onClick={() => beginRecipeNameEdit(recipe)}
+                >
+                  Edit nama
+                </button>
+              </div>
             ))}
             {!loading && !recipes.length ? (
               <p className={styles.muted}>
