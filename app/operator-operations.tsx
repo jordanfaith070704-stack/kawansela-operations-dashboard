@@ -163,6 +163,7 @@ export function OperatorOperations({
       name: batch.recipe_versions?.recipes?.name ?? "Batch",
       remainingMl: batch.remaining_ml,
     }));
+  // Prepared drink stock is derived from open production batches, never typed manually.
   const readyDrinks = Object.values(
     batches
       .filter((batch) => batch.status === "open" && batch.remaining_ml > 0)
