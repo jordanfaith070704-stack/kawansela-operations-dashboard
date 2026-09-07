@@ -197,6 +197,17 @@
 .row small { overflow-wrap: anywhere; }
 .quantity { flex: none; }
 .historyPanel { padding-bottom: 8px; }
+.recapHead { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.recapHead h3 { margin:0; }
+.recapHead p { margin:5px 0 0; color:#6d6d68; }
+.recapPeriods { display:flex; gap:4px; padding:3px; border:1px solid #dfdfda; border-radius:9px; background:#f5f5f2; }
+.recapPeriods button { border:0; border-radius:6px; padding:7px 9px; background:transparent; color:#666; font:700 10px Inter,ui-sans-serif,system-ui,sans-serif; cursor:pointer; }
+.recapPeriods button[aria-pressed="true"] { background:#111; color:#fff; }
+.recapNumbers { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin-top:14px; }
+.recapNumbers > div { min-width:0; border:1px solid #e5e5e0; border-radius:10px; padding:13px; background:#fafaf8; }
+.recapNumbers span { display:block; color:#777; font-size:9px; font-weight:800; letter-spacing:.08em; }
+.recapNumbers strong { display:block; margin:7px 0 4px; font:500 20px Georgia,serif; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.recapNumbers small { display:block; color:#777; font-size:10px; line-height:1.35; }
 .historyList { margin-top: 10px; }
 .historyRow { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:11px 0; border-top:1px solid #ecece9; }
 .historyRow > div { min-width:0; }
@@ -210,5 +221,7 @@
 .retry { border:1px solid #111; border-radius:8px; background:#111; color:#fff; padding:8px 10px; font:700 12px Inter,ui-sans-serif,system-ui,sans-serif; white-space:nowrap; cursor:pointer; }
 .retry:focus-visible { outline:2px solid #111; outline-offset:2px; }
 @media (max-width: 900px) { .numbers { grid-template-columns:1fr 1fr; } .number:last-child { grid-column:1 / -1; } .grid,.stockGrid { grid-template-columns:1fr; } }
-@media (max-width: 420px) { .numbers { grid-template-columns:1fr; } .number:last-child { grid-column:auto; } .error { align-items:flex-start; flex-direction:column; } .retry { width:100%; } }
+@media (max-width: 900px) { .recapNumbers { grid-template-columns:1fr 1fr; } }
+@media (max-width: 520px) { .recapHead { flex-direction:column; } .recapPeriods { width:100%; } .recapPeriods button { flex:1; } }
+@media (max-width: 420px) { .numbers,.recapNumbers { grid-template-columns:1fr; } .number:last-child { grid-column:auto; } .error { align-items:flex-start; flex-direction:column; } .retry { width:100%; } }
 @media (max-width: 420px) { .historyRow { align-items:flex-start; } .historyRow small { max-width:210px; } }

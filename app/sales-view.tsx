@@ -125,11 +125,13 @@ export function SalesView({
   locationId,
   master = false,
   autoSync = true,
+  onOpenCart,
 }: {
   locationId: string | null;
   master?: boolean;
   /** Set false when the enclosing screen already owns the location sync. */
   autoSync?: boolean;
+  onOpenCart?: (locationId: string) => void;
 }) {
   const [rows, setRows] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -144,6 +146,7 @@ export function SalesView({
   const [recapError, setRecapError] = useState(false);
   const [cartPerformance, setCartPerformance] = useState<CartPerformance[]>([]);
   const [cartPerformanceError, setCartPerformanceError] = useState(false);
+  const [showTransactions, setShowTransactions] = useState(!master);
   const [displayTimeZone, setDisplayTimeZone] = useState("Asia/Jakarta");
   const lastUpdatedRef = useRef<Date | null>(null);
   const requestIdRef = useRef(0);
@@ -401,6 +404,12 @@ export function SalesView({
           </button>
         ))}
       </div>
+      {period === "day" ? (
+        <button className={styles.recapHint} type="button" onClick={() => setPeriod("week")}>
+          <span>Recap produk & tren tersedia</span>
+          <strong>Lihat laporan mingguan →</strong>
+        </button>
+      ) : null}
       <section className={styles.metrics}>
         <article className={styles.metric}>
           <span>OMZET · {periodLabel.toUpperCase()}</span>
@@ -583,7 +592,7 @@ export function SalesView({
                   ? ((cart.revenue - cart.previous_revenue) / cart.previous_revenue) * 100
                   : cart.revenue > 0 ? null : 0;
                 return (
-                  <div className={styles.cartRow} key={cart.location_id}>
+                  <button className={styles.cartRow} key={cart.location_id} type="button" onClick={() => onOpenCart?.(cart.location_id)}>
                     <span className={styles.productRank}>{rank}</span>
                     <div className={styles.cartInfo}>
                       <div><strong>{cart.location_code} · {cart.location_name}</strong><span>{cart.cups} cup</span></div>
@@ -591,7 +600,8 @@ export function SalesView({
                     </div>
                     <div className={styles.cartRevenue}><strong>{money.format(cart.revenue)}</strong><small>{cart.active_days} hari aktif · {trend === null ? "baru" : `${trend >= 0 ? "+" : ""}${trend.toFixed(0)}%`}</small></div>
                     <span className={`${styles.performanceStatus} ${status === "Perlu perhatian" || status === "Data belum cukup" ? styles.performanceLow : ""}`}>{status}</span>
-                  </div>
+                    <span className={styles.cartOpen}>Buka cart →</span>
+                  </button>
                 );
               })}
               {cartPerformance.length > 6 ? <div className={styles.cartSummary}>Menampilkan 3 cart teratas dan 3 cart terbawah dari {cartPerformance.length} cart aktif.</div> : null}
@@ -601,7 +611,13 @@ export function SalesView({
           )}
         </article>
       ) : null}
-      <article className={styles.panel}>
+      {master ? (
+        <button className={styles.transactionToggle} type="button" aria-expanded={showTransactions} onClick={() => setShowTransactions((visible) => !visible)}>
+          <span>Detail transaksi seluruh lokasi</span>
+          <strong>{showTransactions ? "Tutup detail ↑" : "Lihat transaksi →"}</strong>
+        </button>
+      ) : null}
+      {showTransactions ? <article className={styles.panel}>
         <h2>{master ? "Transaksi seluruh lokasi" : "Transaksi terbaru"} · {periodLabel}</h2>
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -644,7 +660,7 @@ export function SalesView({
             </tbody>
           </table>
         </div>
-      </article>
+      </article> : null}
     </div>
   );
 }

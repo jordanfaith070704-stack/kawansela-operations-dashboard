@@ -52,7 +52,7 @@ const errorText: Record<string, string> = {
   mapped_item_not_found: "Salah satu item Loyverse tidak ditemukan.",
 };
 
-export function LocationWizard() {
+export function LocationWizard({ initialLocationId = null }: { initialLocationId?: string | null }) {
   const [locations, setLocations] = useState<Location[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [open, setOpen] = useState(false);
@@ -85,6 +85,11 @@ export function LocationWizard() {
   useEffect(() => {
     void load();
   }, []);
+  useEffect(() => {
+    if (!initialLocationId || selectedLocation) return;
+    const target = locations.find((location) => location.id === initialLocationId);
+    if (target) setSelectedLocation(target);
+  }, [initialLocationId, locations, selectedLocation]);
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {

@@ -54,6 +54,16 @@ type ProductionMovement = {
   quantityMl: number;
   createdAt: string;
 };
+type ProductionPeriod = "day" | "week" | "month";
+type ProductionRecap = {
+  produced_ml: number;
+  produced_batches: number;
+  sold_ml: number;
+  wasted_ml: number;
+  restored_ml: number;
+  net_change_ml: number;
+  ready_ml: number;
+};
 
 type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean; expectedCash: number; expectedQris: number; actualCash: number | null; actualQris: number | null; cashVariance: number | null; qrisVariance: number | null };
 type OpnameLine = { system_quantity: number; physical_quantity: number; inventory_items: { name: string; unit: string } | null };
@@ -77,6 +87,9 @@ export function OperatorOperations({
   const [batches, setBatches] = useState<Batch[]>([]);
   const [batchAudits, setBatchAudits] = useState<BatchAudit[]>([]);
   const [historyError, setHistoryError] = useState(false);
+  const [productionPeriod, setProductionPeriod] = useState<ProductionPeriod>("day");
+  const [productionRecap, setProductionRecap] = useState<ProductionRecap | null>(null);
+  const [productionRecapError, setProductionRecapError] = useState(false);
   const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
   const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false, expectedCash: 0, expectedQris: 0, actualCash: null, actualQris: null, cashVariance: null, qrisVariance: null });
   const [lastOpname, setLastOpname] = useState<OpnameLine[]>([]);
@@ -92,7 +105,7 @@ export function OperatorOperations({
       const db = createClient();
       const dayStart = todayStartInJakarta();
       const businessDate = todayInJakarta();
-      const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult, batchAuditResult] =
+      const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult, batchAuditResult, productionRecapResult] =
         await Promise.all([
           db
             .from("location_inventory")
@@ -124,6 +137,10 @@ export function OperatorOperations({
             .eq("entity_type", "production_batches")
             .order("created_at", { ascending: false })
             .limit(12),
+          db.rpc("get_production_movement_recap", {
+            p_location_id: locationId,
+            p_period: productionPeriod,
+          }),
         ]);
       if (
         inventoryResult.error ||
@@ -140,6 +157,17 @@ export function OperatorOperations({
       setBatches((batchResult.data ?? []) as unknown as Batch[]);
       setBatchAudits((batchAuditResult.data ?? []) as BatchAudit[]);
       setHistoryError(Boolean(batchAuditResult.error));
+      const recap = (productionRecapResult.data?.[0] ?? null) as ProductionRecap | null;
+      setProductionRecap(recap ? {
+        produced_ml: Number(recap.produced_ml),
+        produced_batches: Number(recap.produced_batches),
+        sold_ml: Number(recap.sold_ml),
+        wasted_ml: Number(recap.wasted_ml),
+        restored_ml: Number(recap.restored_ml),
+        net_change_ml: Number(recap.net_change_ml),
+        ready_ml: Number(recap.ready_ml),
+      } : null);
+      setProductionRecapError(Boolean(productionRecapResult.error));
       setMasterItems((itemResult.data ?? []) as MasterItem[]);
       const sales = (salesResult.data ?? []) as Array<{ total: number; payment_method: string }>;
       setTodayPayments(sales.reduce((totals, sale) => ({
@@ -151,7 +179,7 @@ export function OperatorOperations({
       setCloseStatus({ sales: sales.length, counted: Boolean(countResult.data), reconciled: Boolean(reconciliation), closed: Boolean(reconciliation?.closed_at), expectedCash: Number(reconciliation?.expected_cash ?? 0), expectedQris: Number(reconciliation?.expected_qris ?? 0), actualCash: reconciliation?.actual_cash ?? null, actualQris: reconciliation?.actual_qris ?? null, cashVariance: reconciliation?.cash_variance ?? null, qrisVariance: reconciliation?.qris_variance ?? null });
       setLoading(false);
     })();
-  }, [locationId, reloadKey]);
+  }, [locationId, productionPeriod, reloadKey]);
   // Master can publish a new recipe while an operator keeps the dashboard open.
   // Refresh the operational source of truth without requiring a logout.
   useEffect(() => {
@@ -323,6 +351,40 @@ export function OperatorOperations({
           visibleKinds={["production"]}
           onCommitted={refresh}
         />
+        <section className={`${styles.panel} ${styles.productionRecap}`}>
+          <div className={styles.recapHead}>
+            <div>
+              <h3>Recap produksi</h3>
+              <p>Ringkasan volume masuk dan keluar untuk cart ini.</p>
+            </div>
+            <div className={styles.recapPeriods} aria-label="Periode recap produksi">
+              {(["day", "week", "month"] as ProductionPeriod[]).map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  aria-pressed={productionPeriod === period}
+                  onClick={() => setProductionPeriod(period)}
+                >
+                  {period === "day" ? "Harian" : period === "week" ? "Mingguan" : "Bulanan"}
+                </button>
+              ))}
+            </div>
+          </div>
+          {loading ? (
+            <div className={styles.empty}>Memuat recap produksi…</div>
+          ) : productionRecapError ? (
+            <div className={styles.empty}>Recap produksi belum dapat dimuat.</div>
+          ) : productionRecap && (productionRecap.produced_ml || productionRecap.sold_ml || productionRecap.wasted_ml || productionRecap.restored_ml) ? (
+            <div className={styles.recapNumbers}>
+              <div><span>PRODUKSI MASUK</span><strong>+{productionRecap.produced_ml} ml</strong><small>{productionRecap.produced_batches} batch{productionRecap.restored_ml ? ` · ${productionRecap.restored_ml} ml kembali` : ""}</small></div>
+              <div><span>TERJUAL KELUAR</span><strong>−{productionRecap.sold_ml} ml</strong><small>{(productionRecap.sold_ml / 150).toFixed(0)} cup diproses</small></div>
+              <div><span>WASTE</span><strong>−{productionRecap.wasted_ml} ml</strong><small>Tumpah, rusak, atau dibuang</small></div>
+              <div><span>SISA SIAP JUAL</span><strong>{productionRecap.ready_ml} ml</strong><small>{(productionRecap.ready_ml / 150).toFixed(1)} cup · saat ini</small></div>
+            </div>
+          ) : (
+            <div className={styles.empty}>Belum ada pergerakan produksi pada periode ini.</div>
+          )}
+        </section>
         <section className={`${styles.panel} ${styles.historyPanel}`}>
           <div className={styles.panelHead}>
             <div>

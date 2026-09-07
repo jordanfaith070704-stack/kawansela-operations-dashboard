@@ -14,7 +14,7 @@ type AuditRow = {
   locations: { code: string } | null;
 };
 
-export function MasterReports() {
+export function MasterReports({ onOpenCart }: { onOpenCart: (locationId: string) => void }) {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -49,7 +49,9 @@ export function MasterReports() {
 
   return (
     <div className={styles.wrap}>
-      <SalesView locationId={null} master />
+      <SalesView locationId={null} master onOpenCart={onOpenCart} />
+      <details className={styles.auditDetails}>
+        <summary><span>Audit operasional</span><strong>Lihat aktivitas terbaru →</strong></summary>
       <section className={styles.audit}>
         <div className={styles.heading}>
           <div>
@@ -90,6 +92,7 @@ export function MasterReports() {
           </div>
         ) : null}
       </section>
+      </details>
     </div>
   );
 }

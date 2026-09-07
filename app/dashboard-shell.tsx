@@ -192,6 +192,7 @@ export function DashboardShell({
   const navigation = isMaster ? masterNav : operatorNav;
   const [active, setActive] = useState(navigation[0]);
   const [posStatus, setPosStatus] = useState("Loyverse · Memuat status");
+  const [selectedMasterLocationId, setSelectedMasterLocationId] = useState<string | null>(null);
   const current = (isMaster ? master : operator)[active];
   const loadPosStatus = useCallback(async () => {
       const { data, error } = await createClient().rpc("get_pos_health", {
@@ -305,7 +306,10 @@ export function DashboardShell({
         ) : isMaster && active === "Resep Master" ? (
           <MasterCatalog initialTab="recipes" />
         ) : isMaster && active === "Laporan & Audit" ? (
-          <MasterReports />
+          <MasterReports onOpenCart={(selectedLocationId) => {
+            setSelectedMasterLocationId(selectedLocationId);
+            setActive("Lokasi");
+          }} />
         ) : isMaster && active === "Pengaturan Akun" ? (
           <AccountSettings />
         ) : !isMaster && active === "Hari Ini" && locationId ? (
@@ -327,7 +331,7 @@ export function DashboardShell({
               <p>{current.description}</p>
             </section>
             {isMaster && active === "Lokasi" ? (
-              <LocationWizard />
+              <LocationWizard initialLocationId={selectedMasterLocationId} />
             ) : (
               <>
                 {current.metrics.length ? (
