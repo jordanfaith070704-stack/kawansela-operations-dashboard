@@ -201,6 +201,7 @@ export function SalesView({
       const updatedAt = new Date();
       lastUpdatedRef.current = updatedAt;
       setLastUpdatedAt(updatedAt);
+      setError("");
     }
     if (healthResult.error) setPosStatus("Status sinkronisasi tidak tersedia");
     else {
