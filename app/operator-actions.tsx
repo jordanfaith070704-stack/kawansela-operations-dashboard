@@ -11,6 +11,7 @@ import styles from "./operator-actions.module.css";
  */
 export const OPERATOR_RPC = {
   createProduction: "create_production_batch",
+  createProductionBatches: "create_production_batches",
   receiveInventory: "receive_inventory",
   recordWaste: "record_inventory_waste",
   completeStockOpname: "record_stock_opname",
@@ -41,6 +42,7 @@ export type OperatorAction =
       locationId: string;
       recipeVersionId: string;
       producedAt: string;
+      batchCount: number;
     }
   | {
       kind: "waste";
@@ -172,11 +174,12 @@ export function OperatorActions({
           throw new Error(result.message || "Aksi belum dapat disimpan.");
       } else if (action.kind === "production") {
         const { error } = await createClient().rpc(
-          OPERATOR_RPC.createProduction,
+          OPERATOR_RPC.createProductionBatches,
           {
             p_location_id: action.locationId,
             p_recipe_version_id: action.recipeVersionId,
             p_produced_at: action.producedAt,
+            p_batch_count: action.batchCount,
           },
         );
         if (error) throw error;
@@ -237,7 +240,7 @@ export function OperatorActions({
       }
       const messages = {
         receive: "Penerimaan stok berhasil dicatat.",
-        production: "Batch 900 ml berhasil dicatat.",
+        production: "Produksi berhasil dicatat.",
         waste: "Waste berhasil dicatat.",
         batch_waste: "Waste batch berhasil dicatat.",
         stock_opname: "Stok opname berhasil disimpan.",
@@ -294,11 +297,17 @@ export function OperatorActions({
   function productionSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const batchCount = Number(form.get("batchCount"));
+    if (!Number.isInteger(batchCount) || batchCount < 1 || batchCount > 50) {
+      setFeedback({ tone: "error", message: "Jumlah batch harus berupa angka antara 1 dan 50." });
+      return;
+    }
     void commit({
       kind: "production",
       locationId,
       recipeVersionId: String(form.get("recipeVersionId")),
       producedAt: jakartaInputToIso(String(form.get("producedAt"))),
+      batchCount,
     });
   }
   function wasteSubmit(event: FormEvent<HTMLFormElement>) {
@@ -447,14 +456,14 @@ export function OperatorActions({
         {visibleKinds.includes("production") ? (
           <ActionCard
             title="Produksi"
-            detail="Buat satu batch standar 900 ml dari resep aktif."
+            detail="Buat satu atau beberapa batch standar dari resep aktif."
           >
             <button
               className={styles.primary}
               type="button"
               onClick={() => setActive("production")}
             >
-              + Catat batch
+              + Catat produksi
             </button>
           </ActionCard>
         ) : null}
@@ -558,7 +567,7 @@ export function OperatorActions({
       {active === "production" && (
         <form className={styles.form} onSubmit={productionSubmit}>
           <div className={styles.formHeader}>
-            <h3>Produksi 900 ml</h3>
+            <h3>Catat produksi</h3>
             <button
               className={styles.close}
               type="button"
@@ -591,9 +600,13 @@ export function OperatorActions({
               required
             />
           </label>
+          <label>
+            Jumlah batch
+            <input name="batchCount" type="number" min="1" max="50" step="1" defaultValue="1" required />
+          </label>
           <p className={styles.help}>
-            Simpan hanya setelah bahan benar-benar digunakan. Sistem akan
-            membuat satu batch 900 ml dan mengurangi bahan sesuai resep.
+            Satu batch mengikuti ukuran resep aktif (misalnya 900 ml). Sistem
+            mengurangi bahan sesuai total batch dan membuat batch FIFO terpisah.
           </p>
           <button
             className={styles.primary}
