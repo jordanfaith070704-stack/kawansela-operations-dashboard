@@ -34,6 +34,17 @@ export function MasterReports() {
 
   useEffect(() => {
     void load();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   return (
