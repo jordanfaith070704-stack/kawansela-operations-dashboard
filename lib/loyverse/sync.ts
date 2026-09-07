@@ -70,6 +70,10 @@ function paymentMethod(payments: LoyversePayment[] | undefined): {
     return {
       method: /static|manual/.test(label) ? "qris_static" : "qris_provider",
     };
+  // This Loyverse account records QRIS payments under the built-in "Card"
+  // tender. Treat it as provider QRIS so sales and end-of-day reconciliation
+  // reflect the real payment channel instead of leaving it as "other".
+  if (/card|kartu/.test(label)) return { method: "qris_provider" };
   if (/cash|tunai/.test(label)) return { method: "cash" };
   return {
     method: "other",
