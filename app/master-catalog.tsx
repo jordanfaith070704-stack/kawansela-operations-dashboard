@@ -121,35 +121,26 @@ export function MasterCatalog({
 
   async function loadCatalog() {
     setLoading(true);
-    const db = createClient();
-    const [{ data: itemRows }, { data: supplierRows }, { data: recipeRows }] =
-      await Promise.all([
-        db
-          .from("inventory_items")
-          .select("id,sku,name,unit,category,supplier_id,standard_unit_cost")
-          .order("category")
-          .order("name"),
-        db
-          .from("suppliers")
-          .select("id,name,lead_days,is_active")
-          .order("name"),
-        db
-          .from("recipes")
-          .select(
-            "id,name,selling_price,active_version,recipe_versions(id,version,batch_ml,serving_ml,carry_days,note,published_at,recipe_version_lines(item_id,quantity,inventory_items(id,name,unit,standard_unit_cost)))",
-          )
-          .order("name"),
-      ]);
-    const nextItems = (itemRows ?? []) as Item[];
-    const nextRecipes = (recipeRows ?? []) as unknown as Recipe[];
-    setItems(nextItems);
-    setSuppliers((supplierRows ?? []) as Supplier[]);
-    setRecipes(nextRecipes);
+    try {
+      const response = await fetch("/api/admin/catalog", { cache: "no-store" });
+      if (!response.ok) throw new Error("catalog_unavailable");
+      const catalog = await response.json() as {
+        items?: Item[]; suppliers?: Supplier[]; recipes?: Recipe[];
+      };
+      const nextItems = catalog.items ?? [];
+      const nextRecipes = catalog.recipes ?? [];
+      setItems(nextItems);
+      setSuppliers(catalog.suppliers ?? []);
+      setRecipes(nextRecipes);
+      setNotice(null);
     setSelectedRecipeId((current) =>
       current && nextRecipes.some((recipe) => recipe.id === current)
         ? current
         : current === "__new__" ? current : "",
     );
+    } catch {
+      setNotice({ tone: "error", text: "Katalog Master tidak dapat dimuat. Coba muat ulang." });
+    }
     setLoading(false);
   }
 
