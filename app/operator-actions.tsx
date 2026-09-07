@@ -231,7 +231,9 @@ export function OperatorActions({
       const message =
         error instanceof Error
           ? error.message
-          : "Terjadi kesalahan. Coba lagi.";
+          : typeof error === "object" && error && "message" in error && typeof error.message === "string"
+            ? error.message
+            : "Terjadi kesalahan. Coba lagi.";
       setFeedback({
         tone: "error",
         message:
