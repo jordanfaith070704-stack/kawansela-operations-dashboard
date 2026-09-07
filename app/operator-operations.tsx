@@ -116,6 +116,15 @@ export function OperatorOperations({
       setLoading(false);
     })();
   }, [locationId, reloadKey]);
+  // Master can publish a new recipe while an operator keeps the dashboard open.
+  // Refresh the operational source of truth without requiring a logout.
+  useEffect(() => {
+    const interval = window.setInterval(
+      () => setReloadKey((key) => key + 1),
+      45_000,
+    );
+    return () => window.clearInterval(interval);
+  }, []);
   const recipeVersions = recipes.flatMap((recipe) => {
     const version = recipe.recipe_versions.find(
       (item) => item.version === recipe.active_version,
