@@ -9,6 +9,9 @@
 .titleRow p { margin:0; color:#6b6b66; font-size:12px; }
 .state { flex:none; border:1px solid #ccc; border-radius:999px; padding:5px 8px; font-size:10px; font-weight:800; }
 .headingActions { display:flex; align-items:center; gap:9px; flex-wrap:wrap; justify-content:flex-end; }
+.configure { border:1px solid #111; border-radius:8px; background:#111; color:#fff; padding:8px 11px; font-size:11px; font-weight:800; cursor:pointer; }
+.configure:hover { background:#2c2c2c; }
+.configure:focus-visible { outline:2px solid #111; outline-offset:2px; }
 .archive { border:1px solid #c8a6a2; border-radius:8px; background:#fff; color:#7e231b; padding:7px 9px; font-size:11px; font-weight:700; cursor:pointer; }
 .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
 .metrics article { padding:16px; min-width:0; }

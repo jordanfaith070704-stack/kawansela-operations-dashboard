@@ -85,6 +85,18 @@ export function LocationWizard() {
     setStoreId("");
     setMappings({});
   }
+  function configurePos(location: Location) {
+    setCreated(location);
+    setConnectionId("");
+    setStores([]);
+    setItems([]);
+    setStoreId("");
+    setMappings({});
+    setError("");
+    setStep(1);
+    setSelectedLocation(null);
+    setOpen(true);
+  }
 
   async function createLocation(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -193,6 +205,7 @@ export function LocationWizard() {
             setSelectedLocation(null);
             void load();
           }}
+          onConfigurePos={() => configurePos(selectedLocation)}
         />
       ) : (
         <>
@@ -205,34 +218,30 @@ export function LocationWizard() {
       <ul className="list">
         {locations.length ? (
           locations.map((location) => (
-            <li key={location.id}>
-              <button
-                className="locationRowButton"
-                type="button"
-                onClick={() => setSelectedLocation(location)}
-              >
-                <span>
+            <li className="locationListItem" key={location.id}>
+              <div className="locationIdentity">
+                <span className="locationCopy">
                   <strong>{location.code}</strong>
-                  <br />
                   <small>{location.name} · {location.city}</small>
                 </span>
                 <span className="pill">
                   {location.is_active ? "AKTIF" : "BELUM SIAP"}
                 </span>
+              </div>
+              <button
+                className="locationActionButton"
+                type="button"
+                onClick={() => {
+                  if (location.is_active) {
+                    setSelectedLocation(location);
+                  } else {
+                    configurePos(location);
+                  }
+                }}
+              >
+                {location.is_active ? "Kelola cart" : "Lanjutkan pengaturan"}
+                <span aria-hidden="true">→</span>
               </button>
-              {!location.is_active ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreated(location);
-                    setStep(1);
-                    setError("");
-                    setOpen(true);
-                  }}
-                >
-                  Lanjutkan pengaturan
-                </button>
-              ) : null}
             </li>
           ))
         ) : (
@@ -312,7 +321,9 @@ export function LocationWizard() {
           {step === 1 ? (
             <form className="form" onSubmit={connect}>
               <p>
-                Masukkan token akses dari akun Loyverse untuk {created?.code}.
+                Masukkan token akses Loyverse untuk {created?.code}. Jika lokasi
+                sudah terhubung, token baru akan menggantikan koneksi aktif
+                setelah seluruh pengujian berhasil.
                 Token dikirim sekali ke server, dienkripsi, dan tidak
                 ditampilkan kembali.
               </p>

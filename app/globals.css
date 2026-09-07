@@ -32,27 +32,64 @@ input {
 button {
   cursor: pointer;
 }
-.locationRowButton {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
+.locationListItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  text-align: left;
+  gap: 18px;
 }
-.locationRowButton:hover strong,
-.locationRowButton:focus-visible strong {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.locationIdentity {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 }
-.locationRowButton:focus-visible {
+.locationCopy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.locationCopy strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.locationCopy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.locationActionButton {
+  min-width: 154px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex: none;
+  border: 1px solid #cecec8;
+  border-radius: 9px;
+  background: #fff;
+  color: #111;
+  padding: 9px 11px;
+  font-size: 11px;
+  font-weight: 800;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+.locationActionButton:hover {
+  border-color: #111;
+  background: #f5f5f2;
+  transform: translateY(-1px);
+}
+.locationActionButton span {
+  font-size: 14px;
+  font-weight: 500;
+}
+.locationActionButton:focus-visible {
   outline: 2px solid #111;
-  outline-offset: 5px;
-  border-radius: 6px;
+  outline-offset: 2px;
 }
 .shell {
   min-height: 100vh;
@@ -270,6 +307,21 @@ button {
   border-top: 1px solid #ecece8;
   padding: 11px 0;
   font-size: 12px;
+}
+@media (max-width: 600px) {
+  .locationListItem {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 0;
+  }
+  .locationIdentity {
+    align-items: flex-start;
+  }
+  .locationActionButton {
+    width: 100%;
+    min-width: 0;
+  }
 }
 .pill {
   font-size: 9px;

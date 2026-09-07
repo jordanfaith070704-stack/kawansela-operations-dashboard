@@ -132,7 +132,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  if (!(await requireMaster()))
+  const master = await requireMaster();
+  if (!master)
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   let body: Record<string, unknown>;
   try {
@@ -251,10 +252,37 @@ export async function PUT(request: NextRequest) {
       .eq("id", connectionId);
     if (activationError)
       return NextResponse.json({ error: "activation_failed" }, { status: 500 });
+    const { error: previousConnectionError } = await admin
+      .from("pos_connections")
+      .update({
+        is_active: false,
+        status: "inactive",
+        effective_until: now,
+        updated_at: now,
+      })
+      .eq("location_id", connection.location_id)
+      .eq("provider", "loyverse")
+      .neq("id", connectionId)
+      .eq("is_active", true);
+    if (previousConnectionError) {
+      await admin
+        .from("pos_connections")
+        .update({ is_active: false, status: "error", last_error: "Koneksi lama belum dapat dinonaktifkan.", updated_at: now })
+        .eq("id", connectionId);
+      return NextResponse.json({ error: "activation_failed" }, { status: 500 });
+    }
     await admin
       .from("locations")
       .update({ is_active: true, updated_at: now })
       .eq("id", connection.location_id);
+    await admin.from("audit_logs").insert({
+      location_id: connection.location_id,
+      actor_id: master.id,
+      action: "ACTIVATE_POS_CONNECTION",
+      entity_type: "pos_connections",
+      entity_id: connectionId,
+      after_data: { provider: "loyverse", external_store_id: storeId, mappings: mappings.length },
+    });
     return NextResponse.json({
       ready: true,
       checks: {

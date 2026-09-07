@@ -51,10 +51,12 @@ export function LocationDetail({
   location,
   onBack,
   onArchived,
+  onConfigurePos,
 }: {
   location: Location;
   onBack: () => void;
   onArchived: () => void;
+  onConfigurePos: () => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -217,6 +219,9 @@ export function LocationDetail({
           </div>
           <div className={styles.headingActions}>
             <span className={styles.state}>{location.is_active ? "AKTIF" : "BELUM SIAP"}</span>
+            <button type="button" className={styles.configure} onClick={onConfigurePos}>
+              Atur Loyverse
+            </button>
           </div>
         </div>
       </section>
