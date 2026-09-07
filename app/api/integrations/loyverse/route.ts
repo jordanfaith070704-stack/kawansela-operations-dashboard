@@ -1,70 +1,86 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { resolveProviderToken } from "@/lib/loyverse/credential-store";
+import { fetchLoyverseReceipts } from "@/lib/loyverse/poll";
 import { processLoyverseReceipts } from "@/lib/loyverse/sync";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-// Deliberately server-only: provider credentials never reach the browser.
-// Configure LOYVERSE_WEBHOOK_SECRET before enabling this endpoint in Loyverse.
+export const maxDuration = 60;
+
+type WebhookConnection = {
+  id: string;
+  external_store_id: string | null;
+  last_processed_receipt_at: string | null;
+};
+
+/**
+ * Back Office webhooks created with a Personal Access Token are not signed by
+ * Loyverse. Each active cart therefore receives a separate high-entropy URL
+ * key, stored only as a SHA-256 hash. Loyverse never receives an internal id.
+ */
 export async function POST(request: NextRequest) {
-  const secret = request.headers.get("x-kawansela-webhook-secret");
-  const configuredSecret = process.env.LOYVERSE_WEBHOOK_SECRET;
+  const secret = request.nextUrl.searchParams.get("key");
+  const secretHash = secret
+    ? createHash("sha256").update(secret).digest("hex")
+    : "";
+  const db = createAdminClient();
+  const lookup = secretHash
+    ? await db
+        .from("pos_connections")
+        .select("id,external_store_id,last_processed_receipt_at,webhook_key_hash")
+        .eq("provider", "loyverse")
+        .eq("is_active", true)
+        .eq("webhook_key_hash", secretHash)
+        .maybeSingle()
+    : { data: null, error: null };
+  const configuredHash = lookup.data?.webhook_key_hash;
   if (
-    !configuredSecret ||
+    lookup.error ||
     !secret ||
-    secret.length !== configuredSecret.length ||
-    !timingSafeEqual(Buffer.from(secret), Buffer.from(configuredSecret))
-  ) {
+    secret.length < 32 ||
+    !configuredHash ||
+    configuredHash.length !== secretHash.length ||
+    !timingSafeEqual(Buffer.from(secretHash), Buffer.from(configuredHash))
+  )
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
 
-  let payload: unknown;
+  let payload: { type?: unknown };
   try {
-    payload = await request.json();
+    payload = (await request.json()) as { type?: unknown };
   } catch {
-    return NextResponse.json(
-      { error: "invalid JSON payload" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const connectionId = request.nextUrl.searchParams.get("connection_id");
-  if (
-    !connectionId ||
-    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(connectionId)
-  )
-    return NextResponse.json(
-      { error: "valid connection_id is required" },
-      { status: 400 },
-    );
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    !Array.isArray((payload as { receipts?: unknown }).receipts)
-  )
-    return NextResponse.json(
-      { error: "connection_id and receipts are required" },
-      { status: 400 },
-    );
-  const receipts = (payload as { receipts: unknown[] }).receipts;
-  if (receipts.length > 500)
-    return NextResponse.json(
-      { error: "maximum 500 receipts per request" },
-      { status: 413 },
-    );
+  if (payload.type !== "receipts.update")
+    return NextResponse.json({ error: "unsupported_event" }, { status: 422 });
+
+  const connection = lookup.data as WebhookConnection;
+  if (!connection.external_store_id)
+    return NextResponse.json({ error: "connection_not_ready" }, { status: 409 });
 
   try {
-    const result = await processLoyverseReceipts(
-      connectionId,
-      receipts as Parameters<typeof processLoyverseReceipts>[1],
+    // The notification is only a trigger. Pull authoritative receipt data with
+    // the server-side Loyverse credential before acknowledging the webhook.
+    const token = await resolveProviderToken(connection.id);
+    const receipts = await fetchLoyverseReceipts(
+      token,
+      connection.external_store_id,
+      connection.last_processed_receipt_at,
     );
+    const result = await processLoyverseReceipts(connection.id, receipts);
+    await db
+      .from("pos_connections")
+      .update({ last_webhook_at: new Date().toISOString() })
+      .eq("id", connection.id);
     return NextResponse.json(
-      { accepted: true, provider: "loyverse", ...result },
+      { accepted: true, processed: result.processed, pending: result.pending },
       { status: result.pending ? 202 : 200 },
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Loyverse sync gagal.";
-    return NextResponse.json(
-      { accepted: false, provider: "loyverse", error: message },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : "webhook_failed";
+    console.error("Loyverse webhook failed", {
+      connectionId: connection.id,
+      message,
+    });
+    return NextResponse.json({ accepted: false }, { status: 500 });
   }
 }
