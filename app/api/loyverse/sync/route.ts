@@ -50,6 +50,56 @@ function productKey(value: string) {
     .replace(/[^a-z0-9]+/g, "");
 }
 
+/** Keep newly-published recipes connected without reopening onboarding. */
+async function mapNewRecipesByExactName(connectionId: string, token: string) {
+  const admin = createAdminClient();
+  const [{ data: recipes, error: recipeError }, { data: mappings, error: mappingError }] =
+    await Promise.all([
+      admin.from("recipes").select("id,name"),
+      admin
+        .from("pos_product_mappings")
+        .select("recipe_id")
+        .eq("pos_connection_id", connectionId)
+        .eq("is_active", true),
+    ]);
+  if (recipeError || mappingError) throw new Error("Pemetaan produk tidak dapat diperiksa.");
+  const mappedIds = new Set((mappings ?? []).map((mapping) => mapping.recipe_id));
+  const missing = (recipes ?? []).filter((recipe) => !mappedIds.has(recipe.id));
+  if (!missing.length) return;
+
+  const response = await fetch("https://api.loyverse.com/v1.0/items?limit=250", {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!response.ok) throw new Error(`Loyverse items HTTP ${response.status}`);
+  const body = await response.json() as {
+    items?: Array<{ id?: string; item_name?: string; name?: string }>;
+  };
+  const items = Array.isArray(body.items) ? body.items : [];
+  const rows = missing.flatMap((recipe) => {
+    const matches = items.filter(
+      (item) =>
+        item.id &&
+        productKey(item.item_name ?? item.name ?? "") === productKey(recipe.name),
+    );
+    return matches.length === 1
+      ? [{
+          pos_connection_id: connectionId,
+          recipe_id: recipe.id,
+          external_item_id: matches[0].id as string,
+          is_required: true,
+          is_active: true,
+        }]
+      : [];
+  });
+  if (!rows.length) return;
+  const { error } = await admin
+    .from("pos_product_mappings")
+    .upsert(rows, { onConflict: "pos_connection_id,recipe_id" });
+  if (error) throw new Error("Pemetaan produk otomatis belum dapat disimpan.");
+}
+
 /** Complete only a previously-saved connection when every assumption is exact. */
 async function activatePendingIfUnambiguous(
   locationId: string,
@@ -98,11 +148,12 @@ async function activatePendingIfUnambiguous(
       return response.json();
     }),
   ]);
-  const storeId = Array.isArray(receiptsBody.receipts)
+  const recentStoreId = Array.isArray(receiptsBody.receipts)
     ? receiptsBody.receipts.find((receipt: { store_id?: unknown }) => typeof receipt.store_id === "string")?.store_id
     : null;
   const stores = Array.isArray(storesBody.stores) ? storesBody.stores : [];
   const items = Array.isArray(itemsBody.items) ? itemsBody.items : [];
+  const storeId = recentStoreId ?? (stores.length === 1 ? stores[0]?.id : null);
   if (!storeId || !stores.some((store: { id?: string }) => store.id === storeId)) return null;
   const mappings = recipeList.map((recipe) => {
     const match = items.find(
@@ -214,6 +265,7 @@ export async function POST(request: NextRequest) {
       .update({ last_attempt_at: new Date().toISOString() })
       .eq("id", connection.id);
     const token = await resolveProviderToken(connection.id);
+    await mapNewRecipesByExactName(connection.id, token);
     if (!connection.webhook_registered_at) {
       try {
         await registerWebhook(token, connection.id);
