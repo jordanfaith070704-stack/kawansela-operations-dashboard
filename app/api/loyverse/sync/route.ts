@@ -19,7 +19,7 @@ async function registerWebhook(token: string, connectionId: string) {
   const response = await fetch("https://api.loyverse.com/v1.0/webhooks", {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ event_type: "RECEIPTS_UPDATE", url: webhookUrl(connectionId) }),
+    body: JSON.stringify({ type: "RECEIPTS_UPDATE", url: webhookUrl(connectionId) }),
     cache: "no-store",
     signal: AbortSignal.timeout(12000),
   });
