@@ -6,7 +6,7 @@
   "crons": [
     {
       "path": "/api/cron/loyverse",
-      "schedule": "0 0 * * *"
+      "schedule": "* * * * *"
     }
   ],
   "headers": [
