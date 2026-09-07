@@ -106,6 +106,25 @@ function todayInJakarta() {
   );
 }
 
+function nowInJakartaInput() {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date()).map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+function jakartaInputToIso(value: string) {
+  return new Date(`${value}:00+07:00`).toISOString();
+}
+
 function ActionCard({
   title,
   detail,
@@ -279,7 +298,7 @@ export function OperatorActions({
       kind: "production",
       locationId,
       recipeVersionId: String(form.get("recipeVersionId")),
-      producedAt: new Date(String(form.get("producedAt"))).toISOString(),
+      producedAt: jakartaInputToIso(String(form.get("producedAt"))),
     });
   }
   function wasteSubmit(event: FormEvent<HTMLFormElement>) {
@@ -568,7 +587,7 @@ export function OperatorActions({
             <input
               name="producedAt"
               type="datetime-local"
-              defaultValue={new Date().toISOString().slice(0, 16)}
+              defaultValue={nowInJakartaInput()}
               required
             />
           </label>
