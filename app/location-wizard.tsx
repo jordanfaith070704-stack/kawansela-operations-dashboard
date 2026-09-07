@@ -102,6 +102,25 @@ export function LocationWizard() {
     setReplacingConnection(location.is_active);
     setSelectedLocation(null);
     setOpen(true);
+    void resumePendingConnection(location);
+  }
+
+  async function resumePendingConnection(location: Location) {
+    setPending(true);
+    try {
+      const { response, body } = await fetchJson<{
+        connectionId?: string;
+        stores?: External[];
+        items?: External[];
+      }>(`/api/admin/pos-connections?locationId=${encodeURIComponent(location.id)}`, undefined, 45000);
+      if (!response.ok || !body.connectionId) return;
+      setConnectionId(body.connectionId);
+      setStores(body.stores ?? []);
+      setItems(body.items ?? []);
+      setStep(2);
+    } finally {
+      setPending(false);
+    }
   }
   function closeWizard() {
     setOpen(false);

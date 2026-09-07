@@ -5,7 +5,9 @@ import { createClient } from "@/lib/supabase/server";
 import {
   decryptProviderToken,
   encryptProviderToken,
+  resolveProviderToken,
 } from "@/lib/loyverse/credential-store";
+import { processLoyverseReceipts } from "@/lib/loyverse/sync";
 
 const LOYVERSE_API = "https://api.loyverse.com/v1.0";
 
@@ -157,6 +159,54 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * Restores the newest unactivated connection after a browser interruption.
+ * The encrypted credential remains server-side; the browser receives only the
+ * store and item catalog needed to finish the wizard.
+ */
+export async function GET(request: NextRequest) {
+  if (!(await requireMaster()))
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  const locationId = request.nextUrl.searchParams.get("locationId") ?? "";
+  if (!locationId)
+    return NextResponse.json({ error: "location_required" }, { status: 400 });
+  try {
+    const admin = createAdminClient();
+    const { data: candidate } = await admin
+      .from("pos_connections")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("provider", "loyverse")
+      .eq("is_active", false)
+      .eq("status", "not_connected")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!candidate)
+      return NextResponse.json({ error: "candidate_not_found" }, { status: 404 });
+    const token = await resolveProviderToken(candidate.id);
+    const [stores, items] = await Promise.all([
+      loyverse(token, "/stores"),
+      loyverse(token, "/items?limit=250"),
+    ]);
+    return NextResponse.json({
+      connectionId: candidate.id,
+      stores: Array.isArray(stores.stores)
+        ? stores.stores.map((store: { id: string; name: string }) => ({ id: store.id, name: store.name }))
+        : [],
+      items: Array.isArray(items.items)
+        ? items.items.map((item: { id: string; item_name?: string; name?: string }) => ({ id: item.id, name: item.item_name ?? item.name ?? item.id }))
+        : [],
+    });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "connection_failed";
+    return NextResponse.json(
+      { error: code === "loyverse_auth_failed" ? code : "connection_failed" },
+      { status: 400 },
+    );
+  }
+}
+
 export async function PUT(request: NextRequest) {
   const master = await requireMaster();
   if (!master)
@@ -286,8 +336,24 @@ export async function PUT(request: NextRequest) {
       entity_id: connectionId,
       after_data: { provider: "loyverse", external_store_id: storeId, mappings: mappings.length },
     });
+    let initialSync: { processed: number; duplicated: number; pending: number } | null = null;
+    try {
+      const receiptList = Array.isArray(receipts.receipts)
+        ? (receipts.receipts as Parameters<typeof processLoyverseReceipts>[1])
+        : [];
+      const sync = await processLoyverseReceipts(connectionId, receiptList);
+      initialSync = {
+        processed: sync.processed,
+        duplicated: sync.duplicated,
+        pending: sync.pending,
+      };
+    } catch {
+      // Activation stays valid even if a historical test receipt needs manual
+      // inventory preparation before it can be imported.
+    }
     return NextResponse.json({
       ready: true,
+      initialSync,
       checks: {
         authentication: true,
         store: true,
