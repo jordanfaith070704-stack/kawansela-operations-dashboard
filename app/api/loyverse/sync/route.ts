@@ -265,7 +265,16 @@ export async function POST(request: NextRequest) {
       .update({ last_attempt_at: new Date().toISOString() })
       .eq("id", connection.id);
     const token = await resolveProviderToken(connection.id);
-    await mapNewRecipesByExactName(connection.id, token);
+    try {
+      await mapNewRecipesByExactName(connection.id, token);
+    } catch (mappingError) {
+      // A temporary catalogue failure must not stop already-mapped sales.
+      console.warn("Loyverse automatic product mapping pending", {
+        connectionId: connection.id,
+        cause:
+          mappingError instanceof Error ? mappingError.message : "unknown_error",
+      });
+    }
     if (!connection.webhook_registered_at) {
       try {
         await registerWebhook(token, connection.id);
