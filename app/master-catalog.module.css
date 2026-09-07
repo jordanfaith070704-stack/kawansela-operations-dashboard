@@ -191,6 +191,36 @@
   font-size: 30px;
   margin: 5px 0;
 }
+.recipeNameLine,
+.recipeNameEditor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.recipeNameLine .tableEdit { margin-top: 0; }
+.recipeNameEditor input {
+  min-height: 42px;
+  width: min(360px, 100%);
+  border: 1px solid #111;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: 500 22px Georgia, serif;
+}
+.recipeNameEditor button {
+  border: 1px solid #111;
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: #111;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.recipeNameEditor .secondaryButton {
+  background: #fff;
+  border-color: #d5d5d0;
+}
 .recipeHeader p {
   max-width: 600px;
   margin: 0;
