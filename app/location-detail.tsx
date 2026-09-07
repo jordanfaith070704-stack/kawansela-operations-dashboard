@@ -181,6 +181,20 @@ export function LocationDetail({
     : connection.status === "healthy"
       ? "Terhubung"
       : "Perlu perhatian";
+  const qrisLabel = qris
+    ? qris.provider.replaceAll("_", " ").toUpperCase()
+    : connection?.external_store_id
+      ? "VIA LOYVERSE"
+      : "BELUM ADA";
+  const qrisSummary = qris
+    ? "Dikonfigurasi"
+    : connection?.external_store_id
+      ? "Tersedia via Loyverse"
+      : "Belum tersedia";
+  const qrisDetail = qris?.reference
+    ?? (connection?.external_store_id
+      ? "Pembayaran Card di Loyverse dicatat sebagai QRIS"
+      : "Hubungkan Loyverse atau tambahkan QRIS manual");
   const closeLabel = !reconciliation?.closed_at
     ? "Belum ditutup"
     : reconciliation.invalidated_at
@@ -263,8 +277,8 @@ export function LocationDetail({
         </article>
         <article>
           <span>QRIS</span>
-          <strong>{loading ? "—" : qris ? "Dikonfigurasi" : "Belum tersedia"}</strong>
-          <small>{qris?.reference ?? "Profil pembayaran terpisah dari POS"}</small>
+          <strong>{loading ? "—" : qrisSummary}</strong>
+          <small>{qrisDetail}</small>
         </article>
         <article>
           <span>BATCH SIAP JUAL</span>
@@ -289,10 +303,10 @@ export function LocationDetail({
           <dl>
             <div><dt>POS</dt><dd>{posLabel}</dd></div>
             <div><dt>ID gerai</dt><dd>{connection?.external_store_id ?? "—"}</dd></div>
-            <div><dt>QRIS</dt><dd>{qris ? qris.provider.replaceAll("_", " ").toUpperCase() : "BELUM ADA"}</dd></div>
+            <div><dt>QRIS</dt><dd>{qrisLabel}</dd></div>
             <div><dt>Tutup hari terakhir</dt><dd>{closeLabel}</dd></div>
           </dl>
-          {connection?.last_error ? <p className={styles.warning}>Sinkronisasi Loyverse perlu diperiksa. Data terbaru mungkin belum masuk.</p> : null}
+          {connection?.last_error ? <p className={styles.warning}>{connection.last_error}</p> : null}
         </article>
         <article className={styles.panel}>
           <h3>Rekonsiliasi terakhir</h3>
@@ -363,7 +377,7 @@ export function LocationDetail({
 
       <section className={styles.sales}>
         <div className={styles.sectionLabel}>PENJUALAN CART</div>
-        <SalesView locationId={location.id} />
+        <SalesView locationId={location.id} autoSync={false} />
       </section>
 
       <section className={styles.panel}>
