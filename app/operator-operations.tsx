@@ -349,14 +349,22 @@ export function OperatorOperations({
                   <strong>{recipe.name}</strong>
                   <small>V{recipe.active_version} · {version?.batch_ml ?? 900} ml · {version?.serving_ml ?? 150} ml/cup</small>
                 </summary>
-                <div className={styles.quantity}>
-                  <strong>{version?.note || "Standar produksi"}</strong>
-                  <small>Masa simpan {version?.carry_days ?? "—"} hari</small>
-                  {(version?.recipe_version_lines ?? []).map((line, index) => (
-                    <small key={`${line.inventory_items?.name}-${index}`}>
-                      {line.inventory_items?.name ?? "Bahan"}: {line.quantity} {line.inventory_items?.unit ?? ""} · {rupiah.format(Number(line.quantity) * Number(line.inventory_items?.standard_unit_cost ?? 0))}
-                    </small>
-                  ))}
+                <div className={styles.recipeGuide}>
+                  <div className={styles.recipeSummary}>
+                    <strong>{version?.note || "Standar produksi"}</strong>
+                    <span>Target {version?.batch_ml ?? 900} ml · {Math.floor((version?.batch_ml ?? 900) / (version?.serving_ml ?? 150))} cup × {version?.serving_ml ?? 150} ml</span>
+                  </div>
+                  <ol className={styles.recipeSteps}>
+                    <li>Siapkan wadah produksi bersih dan ukur bahan berikut.</li>
+                    {(version?.recipe_version_lines ?? []).map((line, index) => (
+                      <li key={`${line.inventory_items?.name}-${index}`}>
+                        <strong>{line.inventory_items?.name ?? "Bahan"}</strong>
+                        <span>{line.quantity} {line.inventory_items?.unit ?? ""} · biaya {rupiah.format(Number(line.quantity) * Number(line.inventory_items?.standard_unit_cost ?? 0))}</span>
+                      </li>
+                    ))}
+                    <li>Setelah sesuai standar, catat sebagai <strong>Produksi</strong> untuk membuat batch siap jual.</li>
+                    <li>Labeli batch: gunakan hingga {version?.carry_days ?? "—"} hari; sajikan {version?.serving_ml ?? 150} ml per cup.</li>
+                  </ol>
                 </div>
               </details>
             );
