@@ -26,7 +26,12 @@ async function registerWebhook(token: string, connectionId: string) {
   const response = await fetch("https://api.loyverse.com/v1.0/webhooks/", {
     method: "POST",
     headers: { ...headers, "Content-Type": "application/json" },
-    body: JSON.stringify({ merchant_id: merchant.id, type: "receipts.update", url: webhookUrl(connectionId) }),
+    body: JSON.stringify({
+      merchant_id: merchant.id,
+      type: "receipts.update",
+      url: webhookUrl(connectionId),
+      status: "ENABLED",
+    }),
     cache: "no-store",
     signal: AbortSignal.timeout(12000),
   });
@@ -210,8 +215,23 @@ export async function POST(request: NextRequest) {
       .eq("id", connection.id);
     const token = await resolveProviderToken(connection.id);
     if (!connection.webhook_registered_at) {
-      await registerWebhook(token, connection.id);
-      await admin.from("pos_connections").update({ webhook_registered_at: new Date().toISOString() }).eq("id", connection.id);
+      try {
+        await registerWebhook(token, connection.id);
+        await admin
+          .from("pos_connections")
+          .update({ webhook_registered_at: new Date().toISOString() })
+          .eq("id", connection.id);
+      } catch (webhookError) {
+        // Webhook setup improves latency, but must never block the existing
+        // authenticated receipt pull or turn a healthy POS connection red.
+        console.warn("Loyverse webhook registration pending", {
+          connectionId: connection.id,
+          cause:
+            webhookError instanceof Error
+              ? webhookError.message
+              : "unknown_error",
+        });
+      }
     }
     const receipts = await fetchLoyverseReceipts(
       token,
