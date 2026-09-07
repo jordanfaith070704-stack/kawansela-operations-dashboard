@@ -79,6 +79,7 @@ export function MasterCatalog({
   const [items, setItems] = useState<Item[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>("");
+  const [editingRecipeName, setEditingRecipeName] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingSupplierId, setEditingSupplierId] = useState("");
@@ -158,6 +159,7 @@ export function MasterCatalog({
 
   useEffect(() => {
     if (!selectedRecipe || !selectedVersion) return;
+    setEditingRecipeName(false);
     setDraft({
       name: selectedRecipe.name,
       price: String(selectedRecipe.selling_price),
@@ -171,6 +173,30 @@ export function MasterCatalog({
       ),
     });
   }, [selectedRecipeId, recipes]);
+
+  async function saveRecipeName() {
+    if (!selectedRecipe || !draft.name.trim()) {
+      setNotice({ tone: "error", text: "Nama produk tidak boleh kosong." });
+      return;
+    }
+    setSaving(true);
+    setNotice(null);
+    const { error } = await createClient()
+      .from("recipes")
+      .update({ name: draft.name.trim() })
+      .eq("id", selectedRecipe.id);
+    setSaving(false);
+    if (error) {
+      setNotice({
+        tone: "error",
+        text: apiError(error, "Nama produk belum dapat disimpan."),
+      });
+      return;
+    }
+    setEditingRecipeName(false);
+    setNotice({ tone: "success", text: "Nama produk berhasil diubah." });
+    await loadCatalog();
+  }
 
   function changeQuantity(itemId: string, value: string) {
     setDraft((current) => ({
@@ -707,7 +733,37 @@ export function MasterCatalog({
                     <div className={styles.eyebrow}>
                       RESEP AKTIF · V{selectedVersion.version}
                     </div>
-                    <h2>{selectedRecipe.name}</h2>
+                    {editingRecipeName ? (
+                      <div className={styles.recipeNameEditor}>
+                        <input
+                          aria-label="Nama produk"
+                          value={draft.name}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              name: event.target.value,
+                            }))
+                          }
+                          autoFocus
+                        />
+                        <button type="button" onClick={() => void saveRecipeName()} disabled={saving}>
+                          {saving ? "Menyimpan…" : "Simpan nama"}
+                        </button>
+                        <button type="button" className={styles.secondaryButton} onClick={() => {
+                          setDraft((current) => ({ ...current, name: selectedRecipe.name }));
+                          setEditingRecipeName(false);
+                        }} disabled={saving}>
+                          Batal
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={styles.recipeNameLine}>
+                        <h2>{selectedRecipe.name}</h2>
+                        <button type="button" className={styles.tableEdit} onClick={() => setEditingRecipeName(true)}>
+                          Edit nama
+                        </button>
+                      </div>
+                    )}
                     <p>
                       Batch 900 ml · 150 ml per serving · 6 serving teoritis.
                       Publikasi hanya memengaruhi produksi berikutnya.
