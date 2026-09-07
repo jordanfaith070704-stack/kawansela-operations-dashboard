@@ -8,7 +8,13 @@ export async function fetchLoyverseReceipts(
   storeId: string,
   since: string | null,
 ) {
-  const from = since ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // Supabase returns timestamps such as "2026-09-07 03:37:10+00", while
+  // Loyverse requires an ISO-8601 query value. Sending the database string
+  // directly causes Loyverse HTTP 400 and stops otherwise-valid connections.
+  const sinceDate = since ? new Date(since) : null;
+  const from = sinceDate && !Number.isNaN(sinceDate.getTime())
+    ? sinceDate.toISOString()
+    : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const receipts: LoyverseReceipt[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 40; page += 1) {
