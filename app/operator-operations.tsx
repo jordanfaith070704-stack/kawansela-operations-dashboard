@@ -241,11 +241,13 @@ export function OperatorOperations({
       if (!data) return [];
       const recipeVersionId = String(data.recipe_version_id ?? "");
       const recipe = recipeVersions.find((item) => item.id === recipeVersionId);
+      const batch = batches.find((item) => item.id === String(data.id ?? ""));
+      const product = recipe?.name ?? batch?.recipe_versions?.recipes?.name ?? "Produk";
       if (audit.action === "INSERT") {
         return [{
           id: audit.id,
           label: "Batch dibuat",
-          product: recipe?.name ?? "Produk",
+          product,
           quantityMl: Number(data.initial_ml ?? 900),
           createdAt: audit.created_at,
         }];
@@ -261,7 +263,7 @@ export function OperatorOperations({
             : after.status === "wasted"
               ? "Waste batch"
               : "Volume terpakai",
-        product: recipe?.name ?? "Produk",
+        product,
         quantityMl,
         createdAt: audit.created_at,
       }];
@@ -376,9 +378,9 @@ export function OperatorOperations({
             <div className={styles.empty}>Recap produksi belum dapat dimuat.</div>
           ) : productionRecap && (productionRecap.produced_ml || productionRecap.sold_ml || productionRecap.wasted_ml || productionRecap.restored_ml) ? (
             <div className={styles.recapNumbers}>
-              <div><span>PRODUKSI MASUK</span><strong>+{productionRecap.produced_ml} ml</strong><small>{productionRecap.produced_batches} batch{productionRecap.restored_ml ? ` · ${productionRecap.restored_ml} ml kembali` : ""}</small></div>
-              <div><span>TERJUAL KELUAR</span><strong>−{productionRecap.sold_ml} ml</strong><small>{(productionRecap.sold_ml / 150).toFixed(0)} cup diproses</small></div>
-              <div><span>WASTE</span><strong>−{productionRecap.wasted_ml} ml</strong><small>Tumpah, rusak, atau dibuang</small></div>
+              <div><span>PRODUKSI MASUK</span><strong>{productionRecap.produced_ml ? "+" : ""}{productionRecap.produced_ml} ml</strong><small>{productionRecap.produced_batches} batch{productionRecap.restored_ml ? ` · ${productionRecap.restored_ml} ml kembali` : ""}</small></div>
+              <div><span>TERJUAL KELUAR</span><strong>{productionRecap.sold_ml ? "−" : ""}{productionRecap.sold_ml} ml</strong><small>{(productionRecap.sold_ml / 150).toFixed(0)} cup diproses</small></div>
+              <div><span>WASTE</span><strong>{productionRecap.wasted_ml ? "−" : ""}{productionRecap.wasted_ml} ml</strong><small>Tumpah, rusak, atau dibuang</small></div>
               <div><span>SISA SIAP JUAL</span><strong>{productionRecap.ready_ml} ml</strong><small>{(productionRecap.ready_ml / 150).toFixed(1)} cup · saat ini</small></div>
             </div>
           ) : (
