@@ -78,6 +78,15 @@ export function SalesView({
       .limit(100);
     if (locationId) query = query.eq("location_id", locationId);
     try {
+    if (locationId && !master) {
+      // Pull only from the browser's own cart. The API validates the session
+      // and performs the provider call on the server.
+      await fetch("/api/loyverse/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locationId }),
+      });
+    }
     const [salesResult, healthResult, rollupResult] = await Promise.all([
       query,
       db.rpc("get_pos_health", { p_location_id: locationId }),

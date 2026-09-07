@@ -2,8 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveProviderToken } from "@/lib/loyverse/credential-store";
+import { fetchLoyverseReceipts } from "@/lib/loyverse/poll";
 import { processLoyverseReceipts } from "@/lib/loyverse/sync";
-import type { LoyverseReceipt } from "@/lib/loyverse/types";
 
 function authorized(request: NextRequest) {
   const expected = process.env.CRON_SECRET;
@@ -13,36 +13,6 @@ function authorized(request: NextRequest) {
   const left = Buffer.from(expected);
   const right = Buffer.from(supplied);
   return left.length === right.length && timingSafeEqual(left, right);
-}
-
-async function fetchReceipts(
-  token: string,
-  storeId: string,
-  since: string | null,
-) {
-  const from =
-    since ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const receipts: LoyverseReceipt[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < 40; page += 1) {
-    const url = new URL("https://api.loyverse.com/v1.0/receipts");
-    url.searchParams.set("store_ids", storeId);
-    url.searchParams.set("created_at_min", from);
-    url.searchParams.set("limit", "250");
-    if (cursor) url.searchParams.set("cursor", cursor);
-    const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!response.ok) throw new Error(`Loyverse HTTP ${response.status}`);
-    const body = await response.json();
-    if (Array.isArray(body.receipts))
-      receipts.push(...(body.receipts as LoyverseReceipt[]));
-    cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : null;
-    if (!cursor) return receipts;
-  }
-  throw new Error("Sinkronisasi Loyverse melebihi batas aman 10.000 receipt.");
 }
 
 async function runScheduledSync(request: NextRequest) {
@@ -65,7 +35,7 @@ async function runScheduledSync(request: NextRequest) {
       if (!connection.external_store_id)
         throw new Error("Store belum dipilih.");
       const token = await resolveProviderToken(connection.id);
-      const receipts = await fetchReceipts(
+      const receipts = await fetchLoyverseReceipts(
         token,
         connection.external_store_id,
         connection.last_processed_receipt_at,
