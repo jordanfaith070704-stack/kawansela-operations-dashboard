@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { LocationWizard } from "./location-wizard";
@@ -193,8 +193,7 @@ export function DashboardShell({
   const [active, setActive] = useState(navigation[0]);
   const [posStatus, setPosStatus] = useState("Loyverse · Memuat status");
   const current = (isMaster ? master : operator)[active];
-  useEffect(() => {
-    void (async () => {
+  const loadPosStatus = useCallback(async () => {
       const { data, error } = await createClient().rpc("get_pos_health", {
         p_location_id: isMaster ? null : locationId,
       });
@@ -219,8 +218,21 @@ export function DashboardShell({
           ? `Loyverse · ${rows.length} koneksi aktif`
           : "Loyverse · Terhubung",
       );
-    })();
   }, [isMaster, locationId]);
+  useEffect(() => {
+    void loadPosStatus();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadPosStatus();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadPosStatus();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadPosStatus]);
   async function signOut() {
     await createClient().auth.signOut();
     router.replace("/login");
