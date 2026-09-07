@@ -236,7 +236,7 @@ export function SalesView({
     void load();
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void load(true);
-    }, 45_000);
+    }, 15_000);
     return () => window.clearInterval(interval);
   }, [load]);
 
