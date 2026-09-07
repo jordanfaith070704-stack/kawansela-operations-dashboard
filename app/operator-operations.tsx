@@ -40,6 +40,20 @@ type Batch = {
   status: string;
   recipe_versions: { version: number; recipes: { name: string } | null } | null;
 };
+type BatchAudit = {
+  id: string;
+  action: string;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  created_at: string;
+};
+type ProductionMovement = {
+  id: string;
+  label: string;
+  product: string;
+  quantityMl: number;
+  createdAt: string;
+};
 
 type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean; expectedCash: number; expectedQris: number; actualCash: number | null; actualQris: number | null; cashVariance: number | null; qrisVariance: number | null };
 type OpnameLine = { system_quantity: number; physical_quantity: number; inventory_items: { name: string; unit: string } | null };
@@ -61,6 +75,8 @@ export function OperatorOperations({
   const [inventory, setInventory] = useState<Inventory[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
+  const [batchAudits, setBatchAudits] = useState<BatchAudit[]>([]);
+  const [historyError, setHistoryError] = useState(false);
   const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
   const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false, expectedCash: 0, expectedQris: 0, actualCash: null, actualQris: null, cashVariance: null, qrisVariance: null });
   const [lastOpname, setLastOpname] = useState<OpnameLine[]>([]);
@@ -76,7 +92,7 @@ export function OperatorOperations({
       const db = createClient();
       const dayStart = todayStartInJakarta();
       const businessDate = todayInJakarta();
-      const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult] =
+      const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult, batchAuditResult] =
         await Promise.all([
           db
             .from("location_inventory")
@@ -101,6 +117,13 @@ export function OperatorOperations({
           db.from("sales").select("id,total,payment_method").eq("location_id", locationId).gte("occurred_at", dayStart.toISOString()),
           db.from("stock_counts").select("id,stock_count_lines(system_quantity,physical_quantity,inventory_items(name,unit))").eq("location_id", locationId).gte("counted_at", dayStart.toISOString()).order("counted_at", { ascending: false }).limit(1).maybeSingle(),
           db.from("daily_reconciliations").select("closed_at,expected_cash,expected_qris,actual_cash,actual_qris,cash_variance,qris_variance").eq("location_id", locationId).eq("business_date", businessDate).maybeSingle(),
+          db
+            .from("audit_logs")
+            .select("id,action,before_data,after_data,created_at")
+            .eq("location_id", locationId)
+            .eq("entity_type", "production_batches")
+            .order("created_at", { ascending: false })
+            .limit(12),
         ]);
       if (
         inventoryResult.error ||
@@ -115,6 +138,8 @@ export function OperatorOperations({
       setInventory((inventoryResult.data ?? []) as unknown as Inventory[]);
       setRecipes((recipeResult.data ?? []) as unknown as Recipe[]);
       setBatches((batchResult.data ?? []) as unknown as Batch[]);
+      setBatchAudits((batchAuditResult.data ?? []) as BatchAudit[]);
+      setHistoryError(Boolean(batchAuditResult.error));
       setMasterItems((itemResult.data ?? []) as MasterItem[]);
       const sales = (salesResult.data ?? []) as Array<{ total: number; payment_method: string }>;
       setTodayPayments(sales.reduce((totals, sale) => ({
@@ -180,6 +205,40 @@ export function OperatorOperations({
       ),
   );
   const refresh = () => setReloadKey((key) => key + 1);
+  const productionMovements = batchAudits
+    .flatMap<ProductionMovement>((audit) => {
+      const before = audit.before_data;
+      const after = audit.after_data;
+      const data = after ?? before;
+      if (!data) return [];
+      const recipeVersionId = String(data.recipe_version_id ?? "");
+      const recipe = recipeVersions.find((item) => item.id === recipeVersionId);
+      if (audit.action === "INSERT") {
+        return [{
+          id: audit.id,
+          label: "Batch dibuat",
+          product: recipe?.name ?? "Produk",
+          quantityMl: Number(data.initial_ml ?? 900),
+          createdAt: audit.created_at,
+        }];
+      }
+      if (audit.action !== "UPDATE" || !before || !after) return [];
+      const quantityMl = Number(after.remaining_ml ?? 0) - Number(before.remaining_ml ?? 0);
+      if (!quantityMl) return [];
+      return [{
+        id: audit.id,
+        label:
+          quantityMl > 0
+            ? "Volume dikembalikan"
+            : after.status === "wasted"
+              ? "Waste batch"
+              : "Volume terpakai",
+        product: recipe?.name ?? "Produk",
+        quantityMl,
+        createdAt: audit.created_at,
+      }];
+    })
+    .slice(0, 8);
   if (error)
     return (
       <div className={styles.wrap}>
@@ -264,6 +323,36 @@ export function OperatorOperations({
           visibleKinds={["production"]}
           onCommitted={refresh}
         />
+        <section className={`${styles.panel} ${styles.historyPanel}`}>
+          <div className={styles.panelHead}>
+            <div>
+              <h3>Riwayat keluar–masuk</h3>
+              <p>Aktivitas volume batch terbaru.</p>
+            </div>
+            <span className={styles.state}>8 TERBARU</span>
+          </div>
+          {loading ? (
+            <div className={styles.empty}>Memuat riwayat…</div>
+          ) : historyError ? (
+            <div className={styles.empty}>Riwayat belum dapat dimuat.</div>
+          ) : productionMovements.length ? (
+            <div className={styles.historyList}>
+              {productionMovements.map((movement) => (
+                <div className={styles.historyRow} key={movement.id}>
+                  <div>
+                    <strong>{movement.label}</strong>
+                    <small>{movement.product} · {formatWib(movement.createdAt)} WIB</small>
+                  </div>
+                  <b className={movement.quantityMl > 0 ? styles.movementIn : styles.movementOut}>
+                    {movement.quantityMl > 0 ? "+" : "−"}{Math.abs(movement.quantityMl)} ml
+                  </b>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className={styles.empty}>Belum ada aktivitas produksi.</div>
+          )}
+        </section>
       </div>
     );
   if (view === "Stok")
