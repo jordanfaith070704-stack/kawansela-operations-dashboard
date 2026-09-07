@@ -221,6 +221,19 @@ export function DashboardShell({
       );
     })();
   }, [isMaster, locationId]);
+  useEffect(() => {
+    if (isMaster || !locationId) return;
+    const sync = () => {
+      void fetch("/api/loyverse/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ locationId }),
+      });
+    };
+    sync();
+    const interval = window.setInterval(sync, 45_000);
+    return () => window.clearInterval(interval);
+  }, [isMaster, locationId]);
   async function signOut() {
     await createClient().auth.signOut();
     router.replace("/login");

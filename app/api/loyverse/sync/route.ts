@@ -7,6 +7,105 @@ import { processLoyverseReceipts } from "@/lib/loyverse/sync";
 
 export const maxDuration = 60;
 
+function productKey(value: string) {
+  return value
+    .replace(/^\[demo\]\s*/i, "")
+    .trim()
+    .toLocaleLowerCase("id-ID")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/** Complete only a previously-saved connection when every assumption is exact. */
+async function activatePendingIfUnambiguous(
+  locationId: string,
+  actorId: string,
+) {
+  const admin = createAdminClient();
+  const [{ data: candidate }, { data: recipes }] = await Promise.all([
+    admin
+      .from("pos_connections")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("provider", "loyverse")
+      .eq("is_active", false)
+      .eq("status", "not_connected")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    admin.from("recipes").select("id,name").order("name"),
+  ]);
+  const recipeList = recipes ?? [];
+  if (!candidate || !recipeList.length) return null;
+  const token = await resolveProviderToken(candidate.id);
+  const [storesBody, itemsBody, receiptsBody] = await Promise.all([
+    fetch("https://api.loyverse.com/v1.0/stores", {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Loyverse tidak dapat dihubungi.");
+      return response.json();
+    }),
+    fetch("https://api.loyverse.com/v1.0/items?limit=250", {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Loyverse tidak dapat dihubungi.");
+      return response.json();
+    }),
+    fetch("https://api.loyverse.com/v1.0/receipts?limit=10", {
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Loyverse tidak dapat dihubungi.");
+      return response.json();
+    }),
+  ]);
+  const storeId = Array.isArray(receiptsBody.receipts)
+    ? receiptsBody.receipts.find((receipt: { store_id?: unknown }) => typeof receipt.store_id === "string")?.store_id
+    : null;
+  const stores = Array.isArray(storesBody.stores) ? storesBody.stores : [];
+  const items = Array.isArray(itemsBody.items) ? itemsBody.items : [];
+  if (!storeId || !stores.some((store: { id?: string }) => store.id === storeId)) return null;
+  const mappings = recipeList.map((recipe) => {
+    const match = items.find(
+      (item: { id?: string; item_name?: string; name?: string }) =>
+        item.id && productKey(item.item_name ?? item.name ?? "") === productKey(recipe.name),
+    );
+    return match?.id ? { recipe_id: recipe.id, external_item_id: match.id } : null;
+  });
+  if (mappings.some((mapping) => !mapping)) return null;
+  const rows = mappings.filter(
+    (mapping): mapping is { recipe_id: string; external_item_id: string } => Boolean(mapping),
+  );
+  const { error: mappingError } = await admin
+    .from("pos_product_mappings")
+    .upsert(rows.map((mapping) => ({
+      pos_connection_id: candidate.id,
+      ...mapping,
+      is_required: true,
+      is_active: true,
+    })), { onConflict: "pos_connection_id,recipe_id" });
+  if (mappingError) throw new Error("Pemetaan produk belum dapat disimpan.");
+  const { error: activationError } = await admin.rpc(
+    "activate_pos_connection_replacement",
+    { p_connection_id: candidate.id, p_external_store_id: storeId },
+  );
+  if (activationError) throw new Error("Koneksi belum dapat diaktifkan.");
+  await admin.from("locations").update({ is_active: true }).eq("id", locationId);
+  await admin.from("audit_logs").insert({
+    location_id: locationId,
+    actor_id: actorId,
+    action: "AUTO_ACTIVATE_POS_CONNECTION",
+    entity_type: "pos_connections",
+    entity_id: candidate.id,
+    after_data: { provider: "loyverse", store_id: storeId, mappings: rows.length },
+  });
+  return { id: candidate.id, storeId };
+}
+
 /**
  * Near-live pull for an open operator dashboard. The client supplies only its
  * location id; membership, connection and credential checks stay server-side.
@@ -34,15 +133,30 @@ export async function POST(request: NextRequest) {
   if (!allowed) return NextResponse.json({ error: "forbidden" }, { status: 403 });
 
   const admin = createAdminClient();
-  const { data: connection } = await admin
+  let { data: connection } = await admin
     .from("pos_connections")
     .select("id,external_store_id,last_processed_receipt_at,last_attempt_at")
     .eq("location_id", locationId)
     .eq("provider", "loyverse")
     .eq("is_active", true)
     .maybeSingle();
+  if (!connection?.external_store_id) {
+    try {
+      await activatePendingIfUnambiguous(locationId, user.id);
+      const refreshed = await admin
+        .from("pos_connections")
+        .select("id,external_store_id,last_processed_receipt_at,last_attempt_at")
+        .eq("location_id", locationId)
+        .eq("provider", "loyverse")
+        .eq("is_active", true)
+        .maybeSingle();
+      connection = refreshed.data;
+    } catch {
+      return NextResponse.json({ status: "setup_needed" }, { status: 409 });
+    }
+  }
   if (!connection?.external_store_id)
-    return NextResponse.json({ status: "not_connected" }, { status: 409 });
+    return NextResponse.json({ status: "setup_needed" }, { status: 409 });
 
   const lastAttempt = connection.last_attempt_at ? Date.parse(connection.last_attempt_at) : 0;
   if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < 30_000)
