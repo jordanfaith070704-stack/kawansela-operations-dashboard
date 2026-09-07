@@ -26,6 +26,10 @@ type Recipe = {
     serving_ml: number;
     carry_days: number;
     note: string;
+    recipe_version_lines: {
+      quantity: number;
+      inventory_items: { name: string; unit: string; standard_unit_cost: number } | null;
+    }[];
   }[];
 };
 type Batch = {
@@ -36,6 +40,15 @@ type Batch = {
   status: string;
   recipe_versions: { version: number; recipes: { name: string } | null } | null;
 };
+
+type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean };
+const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
+function jakartaParts() {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+}
+function todayInJakarta() { const p = jakartaParts(); return `${p.year}-${p.month}-${p.day}`; }
+function todayStartInJakarta() { const p = jakartaParts(); return new Date(Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), -7)); }
+function formatWib(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }); }
 
 export function OperatorOperations({
   view,
@@ -48,6 +61,7 @@ export function OperatorOperations({
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
+  const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -56,7 +70,9 @@ export function OperatorOperations({
       setLoading(true);
       setError("");
       const db = createClient();
-      const [inventoryResult, recipeResult, batchResult, itemResult] =
+      const dayStart = todayStartInJakarta();
+      const businessDate = todayInJakarta();
+      const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult] =
         await Promise.all([
           db
             .from("location_inventory")
@@ -67,7 +83,7 @@ export function OperatorOperations({
           db
             .from("recipes")
             .select(
-              "id,name,selling_price,active_version,recipe_versions(id,version,batch_ml,serving_ml,carry_days,note)",
+              "id,name,selling_price,active_version,recipe_versions(id,version,batch_ml,serving_ml,carry_days,note,recipe_version_lines(quantity,inventory_items(name,unit,standard_unit_cost)))",
             )
             .order("name"),
           db
@@ -78,6 +94,9 @@ export function OperatorOperations({
             .eq("location_id", locationId)
             .order("produced_at", { ascending: false }),
           db.from("inventory_items").select("id,name,unit").order("name"),
+          db.from("sales").select("id").eq("location_id", locationId).gte("occurred_at", dayStart.toISOString()),
+          db.from("stock_counts").select("id").eq("location_id", locationId).gte("counted_at", dayStart.toISOString()).limit(1),
+          db.from("daily_reconciliations").select("closed_at").eq("location_id", locationId).eq("business_date", businessDate).maybeSingle(),
         ]);
       if (
         inventoryResult.error ||
@@ -93,6 +112,7 @@ export function OperatorOperations({
       setRecipes((recipeResult.data ?? []) as unknown as Recipe[]);
       setBatches((batchResult.data ?? []) as unknown as Batch[]);
       setMasterItems((itemResult.data ?? []) as MasterItem[]);
+      setCloseStatus({ sales: salesResult.data?.length ?? 0, counted: Boolean(countResult.data?.length), reconciled: Boolean(reconciliationResult.data), closed: Boolean(reconciliationResult.data?.closed_at) });
       setLoading(false);
     })();
   }, [locationId, reloadKey]);
@@ -169,7 +189,7 @@ export function OperatorOperations({
                       </strong>
                       <small>
                         Versi {batch.recipe_versions?.version ?? "—"} ·{" "}
-                        {new Date(batch.produced_at).toLocaleString("id-ID")}
+                        {formatWib(batch.produced_at)} WIB
                       </small>
                     </div>
                     <div className={styles.quantity}>
@@ -315,22 +335,21 @@ export function OperatorOperations({
               (item) => item.version === recipe.active_version,
             );
             return (
-              <div className={styles.row} key={recipe.id}>
-                <div>
+              <details className={styles.row} key={recipe.id}>
+                <summary>
                   <strong>{recipe.name}</strong>
-                  <small>
-                    {version?.note || "Standar produksi"} · Masa simpan{" "}
-                    {version?.carry_days ?? "—"} hari
-                  </small>
-                </div>
+                  <small>V{recipe.active_version} · {version?.batch_ml ?? 900} ml · {version?.serving_ml ?? 150} ml/cup</small>
+                </summary>
                 <div className={styles.quantity}>
-                  <strong>V{recipe.active_version}</strong>
-                  <small>
-                    {version?.batch_ml ?? 900} ml · {version?.serving_ml ?? 150}{" "}
-                    ml/cup
-                  </small>
+                  <strong>{version?.note || "Standar produksi"}</strong>
+                  <small>Masa simpan {version?.carry_days ?? "—"} hari</small>
+                  {(version?.recipe_version_lines ?? []).map((line, index) => (
+                    <small key={`${line.inventory_items?.name}-${index}`}>
+                      {line.inventory_items?.name ?? "Bahan"}: {line.quantity} {line.inventory_items?.unit ?? ""} · {rupiah.format(Number(line.quantity) * Number(line.inventory_items?.standard_unit_cost ?? 0))}
+                    </small>
+                  ))}
                 </div>
-              </div>
+              </details>
             );
           })}
           {!loading && !recipes.length ? (
@@ -339,7 +358,7 @@ export function OperatorOperations({
         </article>
       </div>
     );
-  const today = new Date().toLocaleDateString("id-ID", { dateStyle: "full" });
+  const today = new Date().toLocaleDateString("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" });
   return (
     <div className={styles.wrap}>
       <section className={styles.next}>
@@ -360,30 +379,29 @@ export function OperatorOperations({
               <strong>1. Penjualan</strong>
               <small>Transaksi valid dari POS</small>
             </div>
-            <span className={styles.state}>BELUM ADA DATA</span>
+            <span className={styles.state}>{closeStatus.sales ? `${closeStatus.sales} TRANSAKSI` : "BELUM ADA DATA"}</span>
           </div>
           <div className={styles.row}>
             <div>
               <strong>2. Stok opname</strong>
               <small>Bandingkan stok sistem dan fisik</small>
             </div>
-            <span className={styles.state}>BELUM DIMULAI</span>
+            <span className={styles.state}>{closeStatus.counted ? "SELESAI" : "BELUM DIMULAI"}</span>
           </div>
           <div className={styles.row}>
             <div>
               <strong>3. Kas & QRIS</strong>
               <small>Masukkan jumlah aktual</small>
             </div>
-            <span className={styles.state}>BELUM DIMULAI</span>
+            <span className={styles.state}>{closeStatus.reconciled ? "SELESAI" : "BELUM DIMULAI"}</span>
           </div>
         </article>
         <article className={styles.panel}>
           <h3>Status penutupan</h3>
           <p>
-            Hari belum dapat ditutup sampai stok opname dan rekonsiliasi
-            diselesaikan.
+            {closeStatus.closed ? "Hari sudah ditutup dan direkonsiliasi." : "Hari belum dapat ditutup sampai stok opname dan rekonsiliasi diselesaikan."}
           </p>
-          <div className={styles.sync}>Belum siap ditutup.</div>
+          <div className={styles.sync}>{closeStatus.closed ? "Tutup hari selesai." : closeStatus.counted && closeStatus.reconciled ? "Siap ditutup." : "Belum siap ditutup."}</div>
         </article>
       </section>
       <OperatorActions
