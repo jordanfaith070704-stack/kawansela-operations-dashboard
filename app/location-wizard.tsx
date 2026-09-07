@@ -70,15 +70,16 @@ export function LocationWizard() {
 
   async function load() {
     const db = createClient();
-    const [locationResult, recipeResult] = await Promise.all([
-      db
-        .from("locations")
-        .select("id,code,name,city,timezone,is_active,opening_date")
-        .is("archived_at", null)
-        .order("code"),
+    const [locationResponse, recipeResult] = await Promise.all([
+      fetchJson<{ locations?: Location[]; error?: string }>("/api/admin/locations"),
       db.from("recipes").select("id,name").order("name"),
     ]);
-    setLocations(locationResult.data ?? []);
+    if (!locationResponse.response.ok) {
+      setError("Daftar lokasi tidak dapat dimuat. Muat ulang halaman lalu coba lagi.");
+      setLocations([]);
+    } else {
+      setLocations(locationResponse.body.locations ?? []);
+    }
     setRecipes(recipeResult.data ?? []);
   }
   useEffect(() => {
