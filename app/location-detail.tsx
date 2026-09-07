@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { SalesView } from "./sales-view";
+import { OperatorOperations } from "./operator-operations";
 import styles from "./location-detail.module.css";
 
 type Location = {
@@ -69,6 +70,7 @@ export function LocationDetail({
   const [savingLead, setSavingLead] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [archiving, setArchiving] = useState(false);
+  const [operationsView, setOperationsView] = useState<"Produksi" | "Stok" | "Tutup Hari">("Stok");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -151,6 +153,23 @@ export function LocationDetail({
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    const sync = async () => {
+      try {
+        const response = await fetch("/api/loyverse/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ locationId: location.id }),
+        });
+        if (response.ok) await load();
+      } catch {
+        // The connection status already exposes the last real provider error.
+      }
+    };
+    void sync();
+    const interval = window.setInterval(() => void sync(), 45_000);
+    return () => window.clearInterval(interval);
+  }, [load, location.id]);
 
   const lowStock = useMemo(
     () => inventory.filter((row) => row.par_level > 0 && row.quantity <= row.par_level),
@@ -345,6 +364,22 @@ export function LocationDetail({
       <section className={styles.sales}>
         <div className={styles.sectionLabel}>PENJUALAN CART</div>
         <SalesView locationId={location.id} />
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelHeading}>
+          <div>
+            <span>OPERASIONAL CART</span>
+            <h3>Kelola sebagai Master</h3>
+            <p className={styles.supporting}>Master dapat membantu operator mencatat produksi, koreksi stok, stock opname, dan rekonsiliasi untuk lokasi ini.</p>
+          </div>
+          <div className={styles.operationTabs}>
+            {(["Stok", "Produksi", "Tutup Hari"] as const).map((view) => (
+              <button key={view} type="button" aria-pressed={operationsView === view} onClick={() => setOperationsView(view)}>{view}</button>
+            ))}
+          </div>
+        </div>
+        <OperatorOperations view={operationsView} locationId={location.id} />
       </section>
 
       <details className={styles.advanced}>

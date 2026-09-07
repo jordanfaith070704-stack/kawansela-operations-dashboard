@@ -213,6 +213,22 @@ export function OperatorOperations({
   if (view === "Stok")
     return (
       <div className={styles.wrap}>
+        <section className={styles.next}>
+          <div>
+            <div className={styles.tag}>PANDUAN STOK</div>
+            <h2>Catat pergerakan—jangan menimpa angka.</h2>
+            <p>Barang datang: Penerimaan stok. Koreksi jumlah: Stock Opname. Barang rusak/tumpah: Waste. Semua perubahan tersimpan dalam riwayat audit.</p>
+          </div>
+        </section>
+        <OperatorActions
+          locationId={locationId}
+          recipeVersions={recipeVersions}
+          countItems={countItems}
+          receiveItems={masterItems}
+          preparedBatches={preparedBatches}
+          visibleKinds={["receive", "count", "waste"]}
+          onCommitted={refresh}
+        />
         <section className={styles.numbers}>
           <article className={styles.number}>
             <span>BAHAN BAKU</span>
@@ -282,15 +298,6 @@ export function OperatorOperations({
             <div className={styles.empty}>Belum ada stok untuk lokasi ini.</div>
           ) : null}
         </article>
-        <OperatorActions
-          locationId={locationId}
-          recipeVersions={recipeVersions}
-          countItems={countItems}
-          receiveItems={masterItems}
-          preparedBatches={preparedBatches}
-          visibleKinds={["receive", "waste", "count"]}
-          onCommitted={refresh}
-        />
       </div>
     );
   if (view === "Resep")
@@ -383,7 +390,7 @@ export function OperatorOperations({
         locationId={locationId}
         recipeVersions={recipeVersions}
         countItems={countItems}
-        visibleKinds={["close"]}
+        visibleKinds={["count", "close"]}
         onCommitted={refresh}
       />
     </div>

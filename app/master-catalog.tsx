@@ -81,6 +81,12 @@ export function MasterCatalog({
   const [selectedRecipeId, setSelectedRecipeId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingSupplierId, setEditingSupplierId] = useState("");
+  const [supplierDraft, setSupplierDraft] = useState({ name: "", leadDays: "" });
+  const [editingItemId, setEditingItemId] = useState("");
+  const [itemDraft, setItemDraft] = useState({
+    sku: "", name: "", unit: "", category: "ingredient", supplierId: "", cost: "",
+  });
   const [notice, setNotice] = useState<Notice>(null);
   const [draft, setDraft] = useState<{
     price: string;
@@ -99,7 +105,7 @@ export function MasterCatalog({
   const creatingRecipe = selectedRecipeId === "__new__";
   const selectedRecipe = creatingRecipe
     ? undefined
-    : (recipes.find((recipe) => recipe.id === selectedRecipeId) ?? recipes[0]);
+    : recipes.find((recipe) => recipe.id === selectedRecipeId);
   const selectedVersion = selectedRecipe
     ? latestVersion(selectedRecipe)
     : undefined;
@@ -137,7 +143,11 @@ export function MasterCatalog({
     setItems(nextItems);
     setSuppliers((supplierRows ?? []) as Supplier[]);
     setRecipes(nextRecipes);
-    setSelectedRecipeId((current) => current || nextRecipes[0]?.id || "");
+    setSelectedRecipeId((current) =>
+      current && nextRecipes.some((recipe) => recipe.id === current)
+        ? current
+        : current === "__new__" ? current : "",
+    );
     setLoading(false);
   }
 
@@ -310,6 +320,60 @@ export function MasterCatalog({
     await loadCatalog();
   }
 
+  function beginSupplierEdit(supplier: Supplier) {
+    setEditingSupplierId(supplier.id);
+    setSupplierDraft({ name: supplier.name, leadDays: String(supplier.lead_days) });
+    setNotice(null);
+  }
+
+  async function saveSupplier(supplierId: string) {
+    const name = supplierDraft.name.trim();
+    const leadDays = Number(supplierDraft.leadDays);
+    if (!name || !Number.isInteger(leadDays) || leadDays < 0) {
+      setNotice({ tone: "error", text: "Masukkan nama pemasok dan lead time yang valid." });
+      return;
+    }
+    setSaving(true);
+    const { error } = await createClient().from("suppliers").update({ name, lead_days: leadDays }).eq("id", supplierId);
+    setSaving(false);
+    if (error) {
+      setNotice({ tone: "error", text: error.code === "23505" ? "Nama pemasok sudah digunakan." : apiError(error, "Perubahan pemasok belum dapat disimpan.") });
+      return;
+    }
+    setEditingSupplierId("");
+    setNotice({ tone: "success", text: "Pemasok diperbarui." });
+    await loadCatalog();
+  }
+
+  async function removeSupplier(supplier: Supplier) {
+    if (!window.confirm(`Hapus ${supplier.name}? Jika sudah dipakai oleh item, pemasok akan dinonaktifkan agar riwayat tetap aman.`)) return;
+    setSaving(true);
+    const isUsed = items.some((item) => item.supplier_id === supplier.id);
+    const query = isUsed
+      ? createClient().from("suppliers").update({ is_active: false }).eq("id", supplier.id)
+      : createClient().from("suppliers").delete().eq("id", supplier.id);
+    const { error } = await query;
+    setSaving(false);
+    if (error) {
+      setNotice({ tone: "error", text: apiError(error, "Pemasok belum dapat dihapus.") });
+      return;
+    }
+    setEditingSupplierId("");
+    setNotice({ tone: "success", text: isUsed ? "Pemasok dinonaktifkan; riwayat item tetap tersimpan." : "Pemasok dihapus." });
+    await loadCatalog();
+  }
+
+  async function toggleSupplier(supplier: Supplier) {
+    setSaving(true);
+    const { error } = await createClient().from("suppliers").update({ is_active: !supplier.is_active }).eq("id", supplier.id);
+    setSaving(false);
+    if (error) setNotice({ tone: "error", text: "Status pemasok belum dapat diubah." });
+    else {
+      setNotice({ tone: "success", text: supplier.is_active ? "Pemasok dinonaktifkan." : "Pemasok diaktifkan kembali." });
+      await loadCatalog();
+    }
+  }
+
   async function addItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -361,6 +425,44 @@ export function MasterCatalog({
     await loadCatalog();
   }
 
+  function beginItemEdit(item: Item) {
+    setEditingItemId(item.id);
+    setItemDraft({ sku: item.sku, name: item.name, unit: item.unit, category: item.category, supplierId: item.supplier_id ?? "", cost: String(item.standard_unit_cost) });
+    setNotice(null);
+  }
+
+  async function saveItem(itemId: string) {
+    const cost = Number(itemDraft.cost);
+    if (!itemDraft.sku.trim() || !itemDraft.name.trim() || !itemDraft.unit.trim() || !["ingredient", "packaging"].includes(itemDraft.category) || !Number.isFinite(cost) || cost < 0) {
+      setNotice({ tone: "error", text: "Lengkapi data item dan biaya standar yang valid." });
+      return;
+    }
+    setSaving(true);
+    const { error } = await createClient().from("inventory_items").update({
+      sku: itemDraft.sku.trim().toUpperCase(), name: itemDraft.name.trim(), unit: itemDraft.unit.trim(),
+      category: itemDraft.category, supplier_id: itemDraft.supplierId || null, standard_unit_cost: cost,
+    }).eq("id", itemId);
+    setSaving(false);
+    if (error) {
+      setNotice({ tone: "error", text: error.code === "23505" ? "SKU ini sudah digunakan." : apiError(error, "Item belum dapat diperbarui.") });
+      return;
+    }
+    setEditingItemId("");
+    setNotice({ tone: "success", text: "Item dan biaya standar diperbarui untuk transaksi berikutnya." });
+    await loadCatalog();
+  }
+
+  function recipeCosts(recipe: Recipe) {
+    const version = latestVersion(recipe);
+    if (!version) return { batch: 0, packaging: 0, cup: 0, profit: Number(recipe.selling_price), margin: 100 };
+    const batch = version.recipe_version_lines.reduce((total, line) => total + Number(line.quantity) * Number(line.inventory_items?.standard_unit_cost ?? 0), 0);
+    const servings = version.batch_ml / version.serving_ml;
+    const packaging = items.filter((item) => item.category === "packaging" && ["CUP-12OZ", "LID-12OZ"].includes(item.sku)).reduce((total, item) => total + Number(item.standard_unit_cost), 0);
+    const cup = batch / servings + packaging;
+    const profit = Number(recipe.selling_price) - cup;
+    return { batch, packaging, cup, profit, margin: Number(recipe.selling_price) > 0 ? (profit / Number(recipe.selling_price)) * 100 : 0 };
+  }
+
   return (
     <section className={styles.catalog} aria-label="Master katalog">
       <div className={styles.tabs} role="tablist" aria-label="Master katalog">
@@ -392,6 +494,23 @@ export function MasterCatalog({
         </div>
       ) : null}
 
+      <details className={styles.guide}>
+        <summary>{tab === "recipes" ? "Panduan input resep + contoh Americano" : "Panduan pemasok, biaya, dan stok"}</summary>
+        {tab === "recipes" ? (
+          <div>
+            <p><strong>Contoh Americano 900 ml:</strong> 120 ml espresso concentrate + 780 ml air = 6 cup × 150 ml.</p>
+            <p>Jika concentrate Rp100.000/liter, isi biaya <strong>Rp100 per ml</strong>. Bahan per cup Rp2.000; cup + lid Rp730; total COGS contoh Rp2.730/cup.</p>
+            <p>Untuk mengubah resep, buka kartu produk lalu terbitkan versi baru. Histori batch lama tidak berubah.</p>
+          </div>
+        ) : (
+          <div>
+            <p><strong>Pemasok:</strong> isi nama dan lead time. Gunakan Edit untuk koreksi. Jika sudah dipakai, Hapus akan mengarsipkan pemasok agar histori aman.</p>
+            <p><strong>Biaya item:</strong> masukkan biaya per unit terkecil yang dipilih—misalnya Rp100 per ml, bukan Rp100.000 per liter.</p>
+            <p><strong>Jumlah stok lokasi:</strong> diperbarui lewat Penerimaan, Waste, atau Stock Opname pada halaman lokasi; bukan ditimpa dari master item.</p>
+          </div>
+        )}
+      </details>
+
       {tab === "recipes" ? (
         <div className={styles.recipeLayout}>
           <aside className={styles.recipeList} aria-label="Daftar resep">
@@ -422,9 +541,9 @@ export function MasterCatalog({
               >
                 <strong>{recipe.name}</strong>
                 <span>
-                  V{recipe.active_version} ·{" "}
-                  {money.format(Number(recipe.selling_price))}
+                  {money.format(recipeCosts(recipe).cup)} COGS/cup
                 </span>
+                <small>{money.format(Number(recipe.selling_price))} · margin {number.format(recipeCosts(recipe).margin)}%</small>
               </button>
             ))}
             {!loading && !recipes.length ? (
@@ -433,7 +552,7 @@ export function MasterCatalog({
               </p>
             ) : null}
           </aside>
-          <div className={styles.recipeContent}>
+          {selectedRecipeId ? <div className={styles.recipeContent}>
             {loading ? (
               <div className={styles.loading}>Memuat Resep Master…</div>
             ) : creatingRecipe ? (
@@ -579,6 +698,7 @@ export function MasterCatalog({
               </form>
             ) : selectedRecipe && selectedVersion ? (
               <>
+                <button type="button" className={styles.backButton} onClick={() => setSelectedRecipeId("")}>← Semua resep</button>
                 <header className={styles.recipeHeader}>
                   <div>
                     <div className={styles.eyebrow}>
@@ -616,6 +736,14 @@ export function MasterCatalog({
                     </strong>
                   </div>
                 </div>
+                <section className={styles.costSummary} aria-label="Ringkasan biaya per cup">
+                  <div><span>Biaya bahan / batch</span><strong>{money.format(recipeCosts(selectedRecipe).batch)}</strong></div>
+                  <div><span>Bahan / cup</span><strong>{money.format(recipeCosts(selectedRecipe).batch / (selectedVersion.batch_ml / selectedVersion.serving_ml))}</strong></div>
+                  <div><span>Cup + lid</span><strong>{money.format(recipeCosts(selectedRecipe).packaging)}</strong></div>
+                  <div className={styles.costTotal}><span>Total COGS / cup</span><strong>{money.format(recipeCosts(selectedRecipe).cup)}</strong></div>
+                  <div><span>Laba kotor / cup</span><strong>{money.format(recipeCosts(selectedRecipe).profit)}</strong></div>
+                  <div><span>Margin kotor</span><strong>{number.format(recipeCosts(selectedRecipe).margin)}%</strong></div>
+                </section>
                 <form className={styles.editor} onSubmit={publish}>
                   <div className={styles.editorHead}>
                     <div>
@@ -763,7 +891,7 @@ export function MasterCatalog({
                 Pilih resep untuk melihat detail.
               </div>
             )}
-          </div>
+          </div> : null}
         </div>
       ) : (
         <div className={styles.inventoryLayout}>
@@ -773,7 +901,7 @@ export function MasterCatalog({
                 <div className={styles.eyebrow}>PEMASOK</div>
                 <h2>Daftar pemasok</h2>
               </div>
-              <span>{suppliers.length} aktif</span>
+              <span>{suppliers.filter((supplier) => supplier.is_active).length} aktif</span>
             </header>
             <form className={styles.inlineForm} onSubmit={addSupplier}>
               <input name="supplier_name" placeholder="Nama pemasok" required />
@@ -793,13 +921,23 @@ export function MasterCatalog({
             <div className={styles.rows}>
               {suppliers.map((supplier) => (
                 <div className={styles.row} key={supplier.id}>
-                  <div>
-                    <strong>{supplier.name}</strong>
-                    <small>
-                      {supplier.is_active ? "Aktif" : "Tidak aktif"}
-                    </small>
-                  </div>
-                  <span>{supplier.lead_days} hari</span>
+                  {editingSupplierId === supplier.id ? (
+                    <div className={styles.rowEditor}>
+                      <input aria-label="Nama pemasok" value={supplierDraft.name} onChange={(event) => setSupplierDraft((current) => ({ ...current, name: event.target.value }))} />
+                      <input aria-label="Lead time hari" type="number" min="0" step="1" value={supplierDraft.leadDays} onChange={(event) => setSupplierDraft((current) => ({ ...current, leadDays: event.target.value }))} />
+                      <button type="button" disabled={saving} onClick={() => void saveSupplier(supplier.id)}>Simpan</button>
+                      <button type="button" className={styles.secondaryButton} onClick={() => setEditingSupplierId("")}>Batal</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div><strong>{supplier.name}</strong><small>{supplier.is_active ? "Aktif" : "Tidak aktif"} · {supplier.lead_days} hari</small></div>
+                      <div className={styles.rowActions}>
+                        <button type="button" onClick={() => beginSupplierEdit(supplier)}>Edit</button>
+                        <button type="button" onClick={() => void toggleSupplier(supplier)}>{supplier.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                        <button type="button" className={styles.dangerButton} onClick={() => void removeSupplier(supplier)}>Hapus</button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
               {!loading && !suppliers.length ? (
@@ -825,7 +963,7 @@ export function MasterCatalog({
               <input name="unit" placeholder="Unit · ml / g / pcs" required />
               <select name="supplier_id" defaultValue="">
                 <option value="">Tanpa pemasok</option>
-                {suppliers.map((supplier) => (
+                {suppliers.filter((supplier) => supplier.is_active).map((supplier) => (
                   <option key={supplier.id} value={supplier.id}>
                     {supplier.name}
                   </option>
@@ -856,6 +994,20 @@ export function MasterCatalog({
                 <tbody>
                   {items.map((item) => (
                     <tr key={item.id}>
+                      {editingItemId === item.id ? <>
+                        <td colSpan={4}>
+                          <div className={styles.itemEditor}>
+                            <input aria-label="SKU" value={itemDraft.sku} onChange={(event) => setItemDraft((current) => ({ ...current, sku: event.target.value }))} />
+                            <input aria-label="Nama item" value={itemDraft.name} onChange={(event) => setItemDraft((current) => ({ ...current, name: event.target.value }))} />
+                            <select aria-label="Kategori" value={itemDraft.category} onChange={(event) => setItemDraft((current) => ({ ...current, category: event.target.value }))}><option value="ingredient">Bahan baku</option><option value="packaging">Kemasan</option></select>
+                            <input aria-label="Unit" value={itemDraft.unit} onChange={(event) => setItemDraft((current) => ({ ...current, unit: event.target.value }))} />
+                            <select aria-label="Pemasok" value={itemDraft.supplierId} onChange={(event) => setItemDraft((current) => ({ ...current, supplierId: event.target.value }))}><option value="">Tanpa pemasok</option>{suppliers.filter((supplier) => supplier.is_active || supplier.id === item.supplier_id).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select>
+                            <input aria-label="Biaya per unit" type="number" min="0" step="0.01" value={itemDraft.cost} onChange={(event) => setItemDraft((current) => ({ ...current, cost: event.target.value }))} />
+                            <button type="button" disabled={saving} onClick={() => void saveItem(item.id)}>Simpan</button>
+                            <button type="button" className={styles.secondaryButton} onClick={() => setEditingItemId("")}>Batal</button>
+                          </div>
+                        </td>
+                      </> : <>
                       <td>
                         <strong>{item.name}</strong>
                         <small>
@@ -875,7 +1027,9 @@ export function MasterCatalog({
                       <td>
                         {money.format(Number(item.standard_unit_cost))}
                         <small>per {item.unit}</small>
+                        <button type="button" className={styles.tableEdit} onClick={() => beginItemEdit(item)}>Edit</button>
                       </td>
+                      </>}
                     </tr>
                   ))}
                 </tbody>

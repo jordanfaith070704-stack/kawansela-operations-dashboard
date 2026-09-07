@@ -93,7 +93,18 @@ async function activatePendingIfUnambiguous(
     "activate_pos_connection_replacement",
     { p_connection_id: candidate.id, p_external_store_id: storeId },
   );
-  if (activationError) throw new Error("Koneksi belum dapat diaktifkan.");
+  if (activationError) {
+    const now = new Date().toISOString();
+    const retired = await admin.from("pos_connections")
+      .update({ is_active: false, status: "inactive", effective_until: now, updated_at: now })
+      .eq("location_id", locationId).eq("provider", "loyverse")
+      .neq("id", candidate.id).eq("is_active", true);
+    if (retired.error) throw new Error(`Koneksi lama belum dapat dinonaktifkan: ${retired.error.message}`);
+    const activated = await admin.from("pos_connections")
+      .update({ external_store_id: storeId, status: "healthy", is_active: true, effective_from: now, effective_until: null, last_attempt_at: now, last_error: null, updated_at: now })
+      .eq("id", candidate.id);
+    if (activated.error) throw new Error(`Koneksi belum dapat diaktifkan: ${activated.error.message}`);
+  }
   await admin.from("locations").update({ is_active: true }).eq("id", locationId);
   await admin.from("audit_logs").insert({
     location_id: locationId,

@@ -66,10 +66,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const admin = createAdminClient();
-    const [{ data: location }, stores, items] = await Promise.all([
+    const [{ data: location }, stores, items, receipts] = await Promise.all([
       admin.from("locations").select("id,code").eq("id", locationId).single(),
       loyverse(token, "/stores"),
       loyverse(token, "/items?limit=250"),
+      loyverse(token, "/receipts?limit=10"),
     ]);
     if (!location)
       return NextResponse.json(
@@ -118,6 +119,10 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+    const storeList = Array.isArray(stores.stores) ? stores.stores : [];
+    const recentStoreId = Array.isArray(receipts.receipts)
+      ? receipts.receipts.find((receipt: { store_id?: unknown }) => typeof receipt.store_id === "string" && receipt.store_id)?.store_id
+      : "";
     return NextResponse.json(
       {
         connectionId: id,
@@ -135,7 +140,7 @@ export async function POST(request: NextRequest) {
               }),
             )
           : [],
-        suggestedStoreId: activeConnection?.external_store_id ?? "",
+        suggestedStoreId: activeConnection?.external_store_id ?? recentStoreId ?? (storeList.length === 1 ? storeList[0].id : ""),
         suggestedMappings: Object.fromEntries(
           (activeMappings ?? []).map((mapping) => [
             mapping.recipe_id,
@@ -331,8 +336,26 @@ export async function PUT(request: NextRequest) {
         p_external_store_id: storeId,
       },
     );
-    if (activationError)
-      return NextResponse.json({ error: "activation_failed" }, { status: 500 });
+    if (activationError) {
+      // Some existing environments predate the atomic activation RPC. Keep the
+      // same safe replacement order so a valid Loyverse token is not trapped in
+      // a permanent setup loop.
+      const retired = await admin
+        .from("pos_connections")
+        .update({ is_active: false, status: "inactive", effective_until: now, updated_at: now })
+        .eq("location_id", connection.location_id)
+        .eq("provider", "loyverse")
+        .neq("id", connectionId)
+        .eq("is_active", true);
+      if (retired.error)
+        return NextResponse.json({ error: "activation_failed", detail: retired.error.message }, { status: 500 });
+      const activated = await admin
+        .from("pos_connections")
+        .update({ external_store_id: storeId, status: "healthy", is_active: true, effective_from: now, effective_until: null, last_attempt_at: now, last_error: null, updated_at: now })
+        .eq("id", connectionId);
+      if (activated.error)
+        return NextResponse.json({ error: "activation_failed", detail: activated.error.message }, { status: 500 });
+    }
     await admin
       .from("locations")
       .update({ is_active: true, updated_at: now })
@@ -356,9 +379,13 @@ export async function PUT(request: NextRequest) {
         duplicated: sync.duplicated,
         pending: sync.pending,
       };
-    } catch {
-      // Activation stays valid even if a historical test receipt needs manual
-      // inventory preparation before it can be imported.
+    } catch (syncError) {
+      initialSync = { processed: 0, duplicated: 0, pending: 1 };
+      await admin.from("pos_connections").update({
+        status: "warning",
+        last_error: syncError instanceof Error ? syncError.message : "Sinkronisasi awal gagal.",
+        updated_at: new Date().toISOString(),
+      }).eq("id", connectionId);
     }
     return NextResponse.json({
       ready: true,

@@ -225,13 +225,15 @@ export function LocationWizard() {
       const availableItems = body.items ?? [];
       setStores(availableStores);
       setItems(availableItems);
-      const suggestedMappings = body.suggestedMappings ?? {};
+      const suggestedMappings = {
+        ...matchRecipeItems(recipes, availableItems),
+        ...(body.suggestedMappings ?? {}),
+      };
       const suggestedStoreId = body.suggestedStoreId ?? "";
       setMappings(suggestedMappings);
       setStoreId(suggestedStoreId);
       formElement.reset();
-      const canReuseConfiguration =
-        replacingConnection &&
+      const canActivateAutomatically =
         Boolean(suggestedStoreId) &&
         availableStores.some((store) => store.id === suggestedStoreId) &&
         recipes.length > 0 &&
@@ -240,7 +242,16 @@ export function LocationWizard() {
             (item) => item.id === suggestedMappings[recipe.id],
           ),
         );
-      setStep(canReuseConfiguration ? 4 : 2);
+      if (canActivateAutomatically) {
+        await activateConnection(
+          body.connectionId ?? "",
+          suggestedStoreId,
+          suggestedMappings,
+          created,
+        );
+      } else {
+        setStep(2);
+      }
     } catch {
       setError("Loyverse belum merespons. Coba lagi beberapa saat.");
     } finally {

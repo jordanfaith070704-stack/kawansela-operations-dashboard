@@ -48,7 +48,24 @@
   border: 1px solid #111;
   color: #111;
 }
+.guide {
+  margin: 0 0 14px;
+  border: 1px solid #d8d8d3;
+  border-radius: 10px;
+  background: #fff;
+}
+.guide summary {
+  padding: 12px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.guide > div { padding: 0 14px 12px; }
+.guide p { margin: 6px 0; color: #5f5f5a; font-size: 12px; line-height: 1.55; }
 .recipeLayout {
+  display: block;
+}
+.recipeLayout:has(.recipeContent) {
   display: grid;
   grid-template-columns: 245px minmax(0, 1fr);
   gap: 14px;
@@ -63,6 +80,14 @@
 .recipeList {
   height: max-content;
   overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+.recipeLayout:has(.recipeContent) .recipeList {
+  display: block;
+  padding: 0;
 }
 .listHead {
   display: flex;
@@ -74,6 +99,7 @@
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.1em;
+  grid-column: 1 / -1;
 }
 .listHead small {
   font-size: 10px;
@@ -84,12 +110,19 @@
 .recipeActive {
   width: 100%;
   padding: 13px 14px;
-  border: 0;
-  border-bottom: 1px solid #ebebe7;
+  border: 1px solid #e2e2dd;
+  border-radius: 10px;
+  aspect-ratio: 1 / 1;
   background: #fff;
   text-align: left;
   cursor: pointer;
   color: #202020;
+}
+.recipeLayout:has(.recipeContent) .recipeButton,
+.recipeLayout:has(.recipeContent) .recipeActive {
+  border-width: 0 0 1px;
+  border-radius: 0;
+  aspect-ratio: auto;
 }
 .recipeButton:hover {
   background: #f4f4f1;
@@ -113,8 +146,26 @@
 .recipeActive span {
   color: #cfcfca;
 }
+.recipeButton small,
+.recipeActive small {
+  display: block;
+  margin-top: 18px;
+  color: #777;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.recipeActive small { color: #cfcfca; }
 .recipeContent {
   padding: 22px;
+}
+.backButton {
+  border: 0;
+  background: transparent;
+  padding: 0 0 14px;
+  color: #555;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 .recipeHeader {
   display: flex;
@@ -189,6 +240,29 @@
   font-family: Georgia, serif;
   font-size: 16px;
 }
+.costSummary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 0 0 18px;
+}
+.costSummary div {
+  border: 1px solid #deded9;
+  border-radius: 9px;
+  padding: 11px;
+}
+.costSummary span,
+.costSummary strong { display: block; }
+.costSummary span {
+  color: #73736e;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.costSummary strong { margin-top: 5px; font: 500 17px Georgia, serif; }
+.costSummary .costTotal { background: #111; color: #fff; border-color: #111; }
+.costSummary .costTotal span { color: #d7d7d2; }
 .editor,
 .history {
   margin-top: 5px;
@@ -291,6 +365,42 @@
   width: 115px;
   min-height: 34px;
 }
+.rowActions,
+.rowEditor,
+.itemEditor {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.rowActions button,
+.rowEditor button,
+.itemEditor button,
+.tableEdit {
+  border: 1px solid #d5d5d0;
+  border-radius: 7px;
+  background: #fff;
+  color: #111;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rowEditor { width: 100%; }
+.rowEditor input,
+.itemEditor input,
+.itemEditor select {
+  min-height: 35px;
+  border: 1px solid #d5d5d0;
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: #fff;
+  color: #111;
+}
+.itemEditor { padding: 5px 0; }
+.dangerButton { text-decoration: underline; }
+.secondaryButton { color: #666 !important; }
+.tableEdit { display: block; margin-top: 7px; }
 .note {
   margin-top: 14px;
 }

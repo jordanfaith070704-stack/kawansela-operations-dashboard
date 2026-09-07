@@ -22,10 +22,18 @@ type ReceiptEvent = {
   processing_error: string | null;
 };
 
+function receiptExternalId(receipt: LoyverseReceipt) {
+  return receipt.id ?? receipt.receipt_number ?? "";
+}
+
+function receiptOccurredAt(receipt: LoyverseReceipt) {
+  return receipt.closed_at ?? receipt.receipt_date ?? receipt.created_at ?? "";
+}
+
 function receiptKind(receipt: LoyverseReceipt): "sale" | "refund" | "void" {
   if (receipt.receipt_type === "REFUND" || receipt.status === "REFUNDED")
     return "refund";
-  if (receipt.status === "CANCELLED") return "void";
+  if (receipt.status === "CANCELLED" || receipt.cancelled_at) return "void";
   return "sale";
 }
 
@@ -39,7 +47,7 @@ function lineExternalId(
   // collapse those lines and skip/double inventory consumption on retry.
   const stableLineId =
     line.id ?? line.line_item_id ?? `${index + 1}:${line.item_id}`;
-  return `${connectionId}:receipt:${receipt.id}:line:${stableLineId}`;
+  return `${connectionId}:receipt:${receiptExternalId(receipt)}:line:${stableLineId}`;
 }
 
 function paymentMethod(payments: LoyversePayment[] | undefined): {
@@ -75,11 +83,12 @@ async function getOrCreateEvent(
   kind: "sale" | "refund" | "void",
 ): Promise<{ event: ReceiptEvent; existed: boolean }> {
   const db = createAdminClient();
+  const externalReceiptId = receiptExternalId(receipt);
   const existing = await db
     .from("pos_receipt_events")
     .select("id, processed_at, processing_error")
     .eq("pos_connection_id", connectionId)
-    .eq("external_receipt_id", receipt.id)
+    .eq("external_receipt_id", externalReceiptId)
     .eq("event_kind", kind)
     .maybeSingle();
   if (existing.error)
@@ -92,7 +101,7 @@ async function getOrCreateEvent(
     .from("pos_receipt_events")
     .insert({
       pos_connection_id: connectionId,
-      external_receipt_id: receipt.id,
+      external_receipt_id: externalReceiptId,
       event_kind: kind,
       payload: receipt,
     })
@@ -106,7 +115,7 @@ async function getOrCreateEvent(
     .from("pos_receipt_events")
     .select("id, processed_at, processing_error")
     .eq("pos_connection_id", connectionId)
-    .eq("external_receipt_id", receipt.id)
+    .eq("external_receipt_id", externalReceiptId)
     .eq("event_kind", kind)
     .maybeSingle();
   if (raced.data) return { event: raced.data, existed: true };
@@ -170,11 +179,13 @@ export async function processLoyverseReceipts(
   try {
     for (const receipt of receipts) {
       const kind = receiptKind(receipt);
-      const prefix = `Receipt ${receipt.id}`;
+      const externalReceiptId = receiptExternalId(receipt);
+      const occurredAt = receiptOccurredAt(receipt);
+      const prefix = `Receipt ${externalReceiptId || "tanpa nomor"}`;
       if (
-        !receipt.id ||
+        !externalReceiptId ||
         !receipt.store_id ||
-        !receipt.closed_at ||
+        !occurredAt ||
         !Array.isArray(receipt.line_items)
       ) {
         result.pending++;
@@ -241,7 +252,7 @@ export async function processLoyverseReceipts(
           p_quantity: line.quantity,
           p_total: line.total_money ?? 0,
           p_payment: mappedPayment.method,
-          p_occurred_at: receipt.closed_at,
+          p_occurred_at: occurredAt,
           p_external_id: lineExternalId(connectionId, receipt, line, index),
         });
         if (sale.error) {

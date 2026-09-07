@@ -14,12 +14,16 @@ export type LoyverseReceiptLine = {
 };
 
 export type LoyverseReceipt = {
-  id: string;
+  /** Loyverse receipts are identified by receipt_number, not a generic id. */
+  id?: string;
+  receipt_number?: string;
   store_id: string;
   created_at?: string;
+  receipt_date?: string;
   receipt_type?: "SALE" | "REFUND";
   status?: string;
-  closed_at: string;
+  closed_at?: string;
+  cancelled_at?: string | null;
   employee_id?: string;
   payments?: LoyversePayment[];
   line_items: LoyverseReceiptLine[];
