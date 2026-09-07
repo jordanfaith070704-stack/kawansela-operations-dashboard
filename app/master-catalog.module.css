@@ -118,6 +118,21 @@
   cursor: pointer;
   color: #202020;
 }
+.recipeCard { min-width: 0; }
+.recipeQuickEdit {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #d5d5d0;
+  border-radius: 7px;
+  background: #fff;
+  color: #111;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.recipeQuickEdit:hover { background: #f4f4f1; }
+.recipeLayout:has(.recipeContent) .recipeQuickEdit { margin-bottom: 8px; }
 .recipeLayout:has(.recipeContent) .recipeButton,
 .recipeLayout:has(.recipeContent) .recipeActive {
   border-width: 0 0 1px;
