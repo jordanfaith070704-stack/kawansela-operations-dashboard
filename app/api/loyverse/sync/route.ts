@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -6,6 +7,25 @@ import { fetchLoyverseReceipts } from "@/lib/loyverse/poll";
 import { processLoyverseReceipts } from "@/lib/loyverse/sync";
 
 export const maxDuration = 60;
+
+function webhookUrl(connectionId: string) {
+  const key = process.env.POS_CREDENTIAL_ENCRYPTION_KEY;
+  if (!key) throw new Error("credential_storage_not_configured");
+  const signature = createHmac("sha256", key).update(connectionId).digest("hex");
+  return `https://dashboard.kawansela.com/api/integrations/loyverse?connection=${encodeURIComponent(connectionId)}&signature=${signature}`;
+}
+
+async function registerWebhook(token: string, connectionId: string) {
+  const response = await fetch("https://api.loyverse.com/v1.0/webhooks", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ event_type: "RECEIPTS_UPDATE", url: webhookUrl(connectionId) }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+  });
+  // A prior successful attempt may be reported as duplicate; it is already safe.
+  if (!response.ok && response.status !== 409) throw new Error(`Webhook Loyverse HTTP ${response.status}`);
+}
 
 function productKey(value: string) {
   return value
@@ -146,7 +166,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient();
   let { data: connection } = await admin
     .from("pos_connections")
-    .select("id,external_store_id,last_processed_receipt_at,last_attempt_at")
+    .select("id,external_store_id,last_processed_receipt_at,last_attempt_at,webhook_registered_at")
     .eq("location_id", locationId)
     .eq("provider", "loyverse")
     .eq("is_active", true)
@@ -156,7 +176,7 @@ export async function POST(request: NextRequest) {
       await activatePendingIfUnambiguous(locationId, user.id);
       const refreshed = await admin
         .from("pos_connections")
-        .select("id,external_store_id,last_processed_receipt_at,last_attempt_at")
+        .select("id,external_store_id,last_processed_receipt_at,last_attempt_at,webhook_registered_at")
         .eq("location_id", locationId)
         .eq("provider", "loyverse")
         .eq("is_active", true)
@@ -179,6 +199,10 @@ export async function POST(request: NextRequest) {
       .update({ last_attempt_at: new Date().toISOString() })
       .eq("id", connection.id);
     const token = await resolveProviderToken(connection.id);
+    if (!connection.webhook_registered_at) {
+      await registerWebhook(token, connection.id);
+      await admin.from("pos_connections").update({ webhook_registered_at: new Date().toISOString() }).eq("id", connection.id);
+    }
     const receipts = await fetchLoyverseReceipts(
       token,
       connection.external_store_id,
