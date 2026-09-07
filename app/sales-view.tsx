@@ -34,6 +34,29 @@ const money = new Intl.NumberFormat("id-ID", {
   maximumFractionDigits: 0,
 });
 
+const indonesiaOffsetHours: Record<string, number> = {
+  "Asia/Jakarta": 7,
+  "Asia/Makassar": 8,
+  "Asia/Jayapura": 9,
+};
+
+function periodStart(period: Period, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  let year = Number(value.year);
+  let month = Number(value.month) - 1;
+  let day = Number(value.day);
+  if (period === "week") day -= 6;
+  if (period === "month") day = 1;
+  const offsetHours = indonesiaOffsetHours[timeZone] ?? 7;
+  return new Date(Date.UTC(year, month, day, -offsetHours));
+}
+
 export function SalesView({
   locationId,
   master = false,
@@ -58,16 +81,17 @@ export function SalesView({
     if (quiet) setRefreshing(true);
     else setLoading(true);
     setError("");
-    const start = new Date();
-    if (period === "day") start.setHours(0, 0, 0, 0);
-    else if (period === "week") {
-      start.setDate(start.getDate() - 6);
-      start.setHours(0, 0, 0, 0);
-    } else {
-      start.setDate(1);
-      start.setHours(0, 0, 0, 0);
-    }
     const db = createClient();
+    let reportTimeZone = "Asia/Jakarta";
+    if (locationId) {
+      const { data: location } = await db
+        .from("locations")
+        .select("timezone")
+        .eq("id", locationId)
+        .maybeSingle();
+      reportTimeZone = location?.timezone ?? reportTimeZone;
+    }
+    const start = periodStart(period, reportTimeZone);
     let query = db
       .from("sales")
       .select(
@@ -78,7 +102,23 @@ export function SalesView({
       .limit(100);
     if (locationId) query = query.eq("location_id", locationId);
     try {
-    if (locationId && !master) {
+    if (master && !locationId) {
+      const { data: activeConnections } = await db
+        .from("pos_connections")
+        .select("location_id")
+        .eq("provider", "loyverse")
+        .eq("is_active", true);
+      const locationIds = [...new Set((activeConnections ?? []).map((connection) => connection.location_id))];
+      await Promise.all(
+        locationIds.map((activeLocationId) =>
+          fetch("/api/loyverse/sync", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ locationId: activeLocationId }),
+          }),
+        ),
+      );
+    } else if (locationId) {
       // Pull only from the browser's own cart. The API validates the session
       // and performs the provider call on the server.
       await fetch("/api/loyverse/sync", {
@@ -142,7 +182,7 @@ export function SalesView({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [locationId, period]);
+  }, [locationId, master, period]);
   useEffect(() => {
     void load();
     const interval = window.setInterval(() => {

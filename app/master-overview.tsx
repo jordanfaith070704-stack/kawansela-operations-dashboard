@@ -16,6 +16,7 @@ type Connection = {
   status: string;
   last_successful_sync_at: string | null;
 };
+type SalesRollup = { cups: number; revenue: number };
 const rupiah = new Intl.NumberFormat("id-ID", {
   style: "currency",
   currency: "IDR",
@@ -32,14 +33,9 @@ export function MasterOverview() {
     void (async () => {
       setReady(false);
       setError("");
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
       const db = createClient();
       const [salesResult, locationsResult, connectionsResult] = await Promise.all([
-        db
-          .from("sales")
-          .select("quantity,total")
-          .gte("occurred_at", start.toISOString()),
+        db.rpc("get_sales_rollup", { p_location_id: null, p_period: "day" }),
         db
           .from("locations")
           .select("id,code,name,city,is_active")
@@ -55,14 +51,14 @@ export function MasterOverview() {
         setReady(true);
         return;
       }
-      const saleRows = salesResult.data;
+      const saleRows = (salesResult.data ?? []) as SalesRollup[];
       const locationRows = locationsResult.data;
       const connectionRows = connectionsResult.data;
       setSales(
-        (saleRows ?? []).reduce(
+        saleRows.reduce(
           (total, sale) => ({
-            cups: total.cups + sale.quantity,
-            revenue: total.revenue + Number(sale.total),
+            cups: total.cups + Number(sale.cups),
+            revenue: total.revenue + Number(sale.revenue),
           }),
           { cups: 0, revenue: 0 },
         ),
