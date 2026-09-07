@@ -89,11 +89,12 @@ export function MasterCatalog({
   });
   const [notice, setNotice] = useState<Notice>(null);
   const [draft, setDraft] = useState<{
+    name: string;
     price: string;
     carryDays: string;
     note: string;
     quantities: Record<string, string>;
-  }>({ price: "", carryDays: "1", note: "", quantities: {} });
+  }>({ name: "", price: "", carryDays: "1", note: "", quantities: {} });
   const [newDraft, setNewDraft] = useState<{
     name: string;
     price: string;
@@ -158,6 +159,7 @@ export function MasterCatalog({
   useEffect(() => {
     if (!selectedRecipe || !selectedVersion) return;
     setDraft({
+      name: selectedRecipe.name,
       price: String(selectedRecipe.selling_price),
       carryDays: String(selectedVersion.carry_days),
       note: "",
@@ -186,6 +188,7 @@ export function MasterCatalog({
       .map(([item_id, quantity]) => ({ item_id, quantity: Number(quantity) }))
       .filter((line) => Number.isFinite(line.quantity) && line.quantity > 0);
     if (
+      !draft.name.trim() ||
       !Number.isFinite(price) ||
       price < 0 ||
       !Number.isInteger(carryDays) ||
@@ -204,7 +207,7 @@ export function MasterCatalog({
     setNotice(null);
     const { error } = await createClient().rpc("publish_recipe_version", {
       p_recipe_id: selectedRecipe.id,
-      p_name: selectedRecipe.name,
+      p_name: draft.name.trim(),
       p_selling_price: price,
       p_carry_days: carryDays,
       p_note: draft.note.trim(),
@@ -223,7 +226,7 @@ export function MasterCatalog({
     }
     setNotice({
       tone: "success",
-      text: `${selectedRecipe.name} diterbitkan sebagai versi baru. Batch lama tidak berubah.`,
+      text: `${draft.name.trim()} diterbitkan sebagai versi baru. Batch lama tidak berubah.`,
     });
     await loadCatalog();
   }
@@ -753,6 +756,19 @@ export function MasterCatalog({
                     <p>Versi aktif dan histori batch tidak ditimpa.</p>
                   </div>
                   <div className={styles.formGrid}>
+                    <label>
+                      Nama produk
+                      <input
+                        value={draft.name}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            name: event.target.value,
+                          }))
+                        }
+                        required
+                      />
+                    </label>
                     <label>
                       Harga jual
                       <input
