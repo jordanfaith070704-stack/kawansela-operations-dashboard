@@ -24,7 +24,10 @@ async function registerWebhook(token: string, connectionId: string) {
     signal: AbortSignal.timeout(12000),
   });
   // A prior successful attempt may be reported as duplicate; it is already safe.
-  if (!response.ok && response.status !== 409) throw new Error(`Webhook Loyverse HTTP ${response.status}`);
+  if (!response.ok && response.status !== 409) {
+    const detail = (await response.text()).slice(0, 500);
+    throw new Error(`Webhook Loyverse HTTP ${response.status}: ${detail}`);
+  }
 }
 
 function productKey(value: string) {
