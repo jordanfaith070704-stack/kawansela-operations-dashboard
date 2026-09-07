@@ -88,6 +88,9 @@ type Props = {
   countItems?: CountItem[];
   receiveItems?: ReceiveItem[];
   preparedBatches?: PreparedBatch[];
+  /** POS totals supplied by the parent; Loyverse remains the source of truth. */
+  expectedCashSales?: number;
+  expectedQrisSales?: number;
   /**
    * Pass a server-side handler here for waste, opname and close-day. This
    * component never writes transactional tables from the browser directly.
@@ -153,6 +156,8 @@ export function OperatorActions({
   countItems = [],
   receiveItems = [],
   preparedBatches = [],
+  expectedCashSales = 0,
+  expectedQrisSales = 0,
   onAction,
   onCommitted,
   visibleKinds = ["receive", "production", "waste", "count", "close"],
@@ -163,6 +168,12 @@ export function OperatorActions({
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [wasteTarget, setWasteTarget] = useState<"inventory" | "batch">("inventory");
+  const [countedValues, setCountedValues] = useState<Record<string, number>>({});
+  const [reconciliationValues, setReconciliationValues] = useState({ opening: 0, cash: 0, qris: 0, other: 0, refund: 0 });
+  const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
+  const expectedCash = expectedCashSales + reconciliationValues.opening + reconciliationValues.other - reconciliationValues.refund;
+  const cashVariance = reconciliationValues.cash - expectedCash;
+  const qrisVariance = reconciliationValues.qris - expectedQrisSales;
 
   async function commit(action: OperatorAction) {
     setPending(true);
@@ -226,7 +237,7 @@ export function OperatorActions({
         );
         if (error) throw error;
       } else {
-        const { error } = await createClient().rpc(OPERATOR_RPC.closeDay, {
+        const { data, error } = await createClient().rpc(OPERATOR_RPC.closeDay, {
           p_location_id: action.locationId,
           p_business_date: action.businessDate,
           p_opening_cash: action.openingCash,
@@ -237,6 +248,13 @@ export function OperatorActions({
           p_note: action.note || null,
         });
         if (error) throw error;
+        const result = data as { expected_cash?: number; expected_qris?: number; cash_variance?: number; qris_variance?: number } | null;
+        if (result) {
+          setFeedback({ tone: "success", message: `Rekonsiliasi tersimpan · Cash ${rupiah.format(Number(result.cash_variance ?? 0))} · QRIS ${rupiah.format(Number(result.qris_variance ?? 0))}.` });
+          setActive(null);
+          await onCommitted?.();
+          return;
+        }
       }
       const messages = {
         receive: "Penerimaan stok berhasil dicatat.",
@@ -730,9 +748,7 @@ export function OperatorActions({
                 <label key={item.id} className={styles.countRow}>
                   <span>
                     <strong>{item.name}</strong>
-                    <small>
-                      Sistem: {item.systemQuantity} {item.unit}
-                    </small>
+                    <small>Sistem: {item.systemQuantity} {item.unit} · Selisih: {(countedValues[item.id] ?? item.systemQuantity) - item.systemQuantity} {item.unit}</small>
                   </span>
                   <input
                     name={`count:${item.id}`}
@@ -740,6 +756,7 @@ export function OperatorActions({
                     min="0"
                     step="0.001"
                     defaultValue={item.systemQuantity}
+                    onChange={(event) => setCountedValues((values) => ({ ...values, [item.id]: Number(event.target.value) || 0 }))}
                     required
                   />
                 </label>
@@ -792,6 +809,7 @@ export function OperatorActions({
                 min="0"
                 step="1"
                 defaultValue="0"
+                onChange={(event) => setReconciliationValues((value) => ({ ...value, opening: Number(event.target.value) || 0 }))}
                 required
               />
             </label>
@@ -803,6 +821,7 @@ export function OperatorActions({
                 min="0"
                 step="1"
                 required
+                onChange={(event) => setReconciliationValues((value) => ({ ...value, cash: Number(event.target.value) || 0 }))}
               />
             </label>
             <label>
@@ -813,6 +832,7 @@ export function OperatorActions({
                 min="0"
                 step="1"
                 required
+                onChange={(event) => setReconciliationValues((value) => ({ ...value, qris: Number(event.target.value) || 0 }))}
               />
             </label>
             <label>
@@ -823,6 +843,7 @@ export function OperatorActions({
                 min="0"
                 step="1"
                 defaultValue="0"
+                onChange={(event) => setReconciliationValues((value) => ({ ...value, other: Number(event.target.value) || 0 }))}
                 required
               />
             </label>
@@ -834,9 +855,15 @@ export function OperatorActions({
                 min="0"
                 step="1"
                 defaultValue="0"
+                onChange={(event) => setReconciliationValues((value) => ({ ...value, refund: Number(event.target.value) || 0 }))}
                 required
               />
             </label>
+          </div>
+          <div className={styles.reconciliationPreview} aria-live="polite">
+            <strong>Hasil otomatis sebelum simpan</strong>
+            <span>Cash sistem {rupiah.format(expectedCash)} · aktual {rupiah.format(reconciliationValues.cash)} · selisih {rupiah.format(cashVariance)}</span>
+            <span>QRIS dari Loyverse {rupiah.format(expectedQrisSales)} · aktual {rupiah.format(reconciliationValues.qris)} · selisih {rupiah.format(qrisVariance)}</span>
           </div>
           <label>
             Catatan / alasan selisih
