@@ -69,6 +69,20 @@ export async function POST(request: NextRequest) {
         { error: "location_not_found" },
         { status: 404 },
       );
+    const { data: activeConnection } = await admin
+      .from("pos_connections")
+      .select("id,external_store_id")
+      .eq("location_id", locationId)
+      .eq("provider", "loyverse")
+      .eq("is_active", true)
+      .maybeSingle();
+    const { data: activeMappings } = activeConnection
+      ? await admin
+          .from("pos_product_mappings")
+          .select("recipe_id,external_item_id")
+          .eq("pos_connection_id", activeConnection.id)
+          .eq("is_active", true)
+      : { data: [] };
     const id = randomUUID();
     const secret = encryptProviderToken(token);
     const { error: connectionError } = await admin
@@ -114,6 +128,13 @@ export async function POST(request: NextRequest) {
               }),
             )
           : [],
+        suggestedStoreId: activeConnection?.external_store_id ?? "",
+        suggestedMappings: Object.fromEntries(
+          (activeMappings ?? []).map((mapping) => [
+            mapping.recipe_id,
+            mapping.external_item_id,
+          ]),
+        ),
       },
       { status: 201 },
     );
@@ -239,38 +260,15 @@ export async function PUT(request: NextRequest) {
         { status: 500 },
       );
     const now = new Date().toISOString();
-    const { error: activationError } = await admin
-      .from("pos_connections")
-      .update({
-        external_store_id: storeId,
-        status: "healthy",
-        is_active: true,
-        last_attempt_at: now,
-        last_error: null,
-        updated_at: now,
-      })
-      .eq("id", connectionId);
+    const { error: activationError } = await admin.rpc(
+      "activate_pos_connection_replacement",
+      {
+        p_connection_id: connectionId,
+        p_external_store_id: storeId,
+      },
+    );
     if (activationError)
       return NextResponse.json({ error: "activation_failed" }, { status: 500 });
-    const { error: previousConnectionError } = await admin
-      .from("pos_connections")
-      .update({
-        is_active: false,
-        status: "inactive",
-        effective_until: now,
-        updated_at: now,
-      })
-      .eq("location_id", connection.location_id)
-      .eq("provider", "loyverse")
-      .neq("id", connectionId)
-      .eq("is_active", true);
-    if (previousConnectionError) {
-      await admin
-        .from("pos_connections")
-        .update({ is_active: false, status: "error", last_error: "Koneksi lama belum dapat dinonaktifkan.", updated_at: now })
-        .eq("id", connectionId);
-      return NextResponse.json({ error: "activation_failed" }, { status: 500 });
-    }
     await admin
       .from("locations")
       .update({ is_active: true, updated_at: now })

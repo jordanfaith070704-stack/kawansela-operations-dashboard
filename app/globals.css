@@ -36,7 +36,29 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
+  gap: 12px;
+}
+.locationOpenButton {
+  min-width: 0;
+  min-height: 48px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  padding: 4px 6px;
+  text-align: left;
+}
+.locationOpenButton:hover {
+  background: #f5f5f2;
+}
+.locationOpenButton:focus-visible,
+.locationSetupButton:focus-visible {
+  outline: 2px solid #111;
+  outline-offset: 2px;
 }
 .locationIdentity {
   min-width: 0;
@@ -62,34 +84,29 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.locationActionButton {
-  min-width: 154px;
+.locationChevron {
+  flex: none;
+  color: #777;
+  font-size: 16px;
+}
+.locationSetupButton {
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: center;
   flex: none;
   border: 1px solid #cecec8;
   border-radius: 9px;
   background: #fff;
   color: #111;
-  padding: 9px 11px;
-  font-size: 11px;
+  min-height: 44px;
+  padding: 9px 12px;
+  font-size: 13px;
   font-weight: 800;
-  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
-.locationActionButton:hover {
+.locationSetupButton:hover {
   border-color: #111;
   background: #f5f5f2;
-  transform: translateY(-1px);
-}
-.locationActionButton span {
-  font-size: 14px;
-  font-weight: 500;
-}
-.locationActionButton:focus-visible {
-  outline: 2px solid #111;
-  outline-offset: 2px;
 }
 .shell {
   min-height: 100vh;
@@ -310,17 +327,14 @@ button {
 }
 @media (max-width: 600px) {
   .locationListItem {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     padding: 14px 0;
   }
   .locationIdentity {
     align-items: flex-start;
   }
-  .locationActionButton {
-    width: 100%;
-    min-width: 0;
+  .locationSetupButton {
+    padding-inline: 10px;
   }
 }
 .pill {
@@ -450,6 +464,26 @@ button {
 }
 .wizardClose:disabled { cursor: not-allowed; opacity: 0.5; }
 .wizardClose:focus-visible { outline: 2px solid #111; outline-offset: 2px; }
+.wizardBack {
+  min-height: 42px;
+  margin-top: 12px;
+  border: 1px solid #cecec8;
+  border-radius: 9px;
+  background: #fff;
+  color: #333;
+  padding: 9px 13px;
+  font-size: 13px;
+  font-weight: 750;
+}
+.wizardBack:hover { border-color: #111; background: #f5f5f2; }
+.wizardDialog .form input,
+.wizardDialog .form select {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 11px;
+}
 @media (max-width: 850px) {
   .shell {
     grid-template-columns: 1fr;

@@ -49,6 +49,7 @@ export function LocationWizard() {
   const [storeId, setStoreId] = useState("");
   const [mappings, setMappings] = useState<Record<string, string>>({});
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
+  const [replacingConnection, setReplacingConnection] = useState(false);
 
   async function load() {
     const db = createClient();
@@ -69,11 +70,14 @@ export function LocationWizard() {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) setOpen(false);
+      if (event.key === "Escape" && !pending) {
+        setOpen(false);
+        if (replacingConnection && created) setSelectedLocation(created);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, pending]);
+  }, [created, open, pending, replacingConnection]);
   function resetWizard() {
     setOpen(true);
     setStep(0);
@@ -84,6 +88,7 @@ export function LocationWizard() {
     setItems([]);
     setStoreId("");
     setMappings({});
+    setReplacingConnection(false);
   }
   function configurePos(location: Location) {
     setCreated(location);
@@ -94,8 +99,13 @@ export function LocationWizard() {
     setMappings({});
     setError("");
     setStep(1);
+    setReplacingConnection(location.is_active);
     setSelectedLocation(null);
     setOpen(true);
+  }
+  function closeWizard() {
+    setOpen(false);
+    if (replacingConnection && created) setSelectedLocation(created);
   }
 
   async function createLocation(event: FormEvent<HTMLFormElement>) {
@@ -143,7 +153,7 @@ export function LocationWizard() {
     setError("");
     const form = new FormData(event.currentTarget);
     try {
-      const { response, body } = await fetchJson<{ error?: string; connectionId?: string; stores?: External[]; items?: External[] }>("/api/admin/pos-connections", {
+      const { response, body } = await fetchJson<{ error?: string; connectionId?: string; stores?: External[]; items?: External[]; suggestedStoreId?: string; suggestedMappings?: Record<string, string> }>("/api/admin/pos-connections", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -151,15 +161,31 @@ export function LocationWizard() {
           accessToken: form.get("accessToken"),
         }),
       });
-      event.currentTarget.reset();
       if (!response.ok) {
         setError(errorText[body.error ?? ""] ?? "Koneksi belum dapat disimpan.");
         return;
       }
       setConnectionId(body.connectionId ?? "");
-      setStores(body.stores ?? []);
-      setItems(body.items ?? []);
-      setStep(2);
+      const availableStores = body.stores ?? [];
+      const availableItems = body.items ?? [];
+      setStores(availableStores);
+      setItems(availableItems);
+      const suggestedMappings = body.suggestedMappings ?? {};
+      const suggestedStoreId = body.suggestedStoreId ?? "";
+      setMappings(suggestedMappings);
+      setStoreId(suggestedStoreId);
+      event.currentTarget.reset();
+      const canReuseConfiguration =
+        replacingConnection &&
+        Boolean(suggestedStoreId) &&
+        availableStores.some((store) => store.id === suggestedStoreId) &&
+        recipes.length > 0 &&
+        recipes.every((recipe) =>
+          availableItems.some(
+            (item) => item.id === suggestedMappings[recipe.id],
+          ),
+        );
+      setStep(canReuseConfiguration ? 4 : 2);
     } catch {
       setError("Loyverse belum merespons. Coba lagi beberapa saat.");
     } finally {
@@ -211,7 +237,7 @@ export function LocationWizard() {
         <>
       <div className="eyebrow">LOKASI</div>
       <h3>Lokasi dan cart</h3>
-      <p>Klik cart untuk melihat penjualan, stok, koneksi, dan rekonsiliasi.</p>
+      <p>Pilih cart untuk melihat penjualan, stok, koneksi, dan rekonsiliasi.</p>
       <button className="primary" type="button" onClick={resetWizard}>
         + Tambah Lokasi
       </button>
@@ -219,29 +245,27 @@ export function LocationWizard() {
         {locations.length ? (
           locations.map((location) => (
             <li className="locationListItem" key={location.id}>
-              <div className="locationIdentity">
+              <button
+                className="locationOpenButton"
+                type="button"
+                onClick={() => setSelectedLocation(location)}
+              >
+              <span className="locationIdentity">
                 <span className="locationCopy">
                   <strong>{location.code}</strong>
                   <small>{location.name} · {location.city}</small>
                 </span>
                 <span className="pill">
-                  {location.is_active ? "AKTIF" : "BELUM SIAP"}
+                  {location.is_active ? "AKTIF" : "BELUM TERHUBUNG"}
                 </span>
-              </div>
-              <button
-                className="locationActionButton"
-                type="button"
-                onClick={() => {
-                  if (location.is_active) {
-                    setSelectedLocation(location);
-                  } else {
-                    configurePos(location);
-                  }
-                }}
-              >
-                {location.is_active ? "Kelola cart" : "Lanjutkan pengaturan"}
-                <span aria-hidden="true">→</span>
+              </span>
+              <span className="locationChevron" aria-hidden="true">→</span>
               </button>
+              {!location.is_active ? (
+                <button className="locationSetupButton" type="button" onClick={() => configurePos(location)}>
+                  Lanjutkan setup
+                </button>
+              ) : null}
             </li>
           ))
         ) : (
@@ -252,7 +276,7 @@ export function LocationWizard() {
         <div
           className="wizardBackdrop"
           onMouseDown={() => {
-            if (!pending) setOpen(false);
+            if (!pending) closeWizard();
           }}
         >
           <div
@@ -264,14 +288,20 @@ export function LocationWizard() {
           >
             <div className="wizardHead">
               <div>
-                <div className="eyebrow">PENGATURAN LOKASI · {step + 1}/6</div>
-                <h3 id="location-wizard-title">{steps[step]}</h3>
+                <div className="eyebrow">
+                  {replacingConnection
+                    ? "KONEKSI LOYVERSE"
+                    : `PENGATURAN LOKASI · ${step + 1}/6`}
+                </div>
+                <h3 id="location-wizard-title">
+                  {replacingConnection && step === 1 ? "Ganti access token" : steps[step]}
+                </h3>
               </div>
               <button
                 className="wizardClose"
                 type="button"
                 disabled={pending}
-                onClick={() => setOpen(false)}
+                onClick={closeWizard}
                 aria-label="Tutup pengaturan lokasi"
               >
                 ×
@@ -321,11 +351,9 @@ export function LocationWizard() {
           {step === 1 ? (
             <form className="form" onSubmit={connect}>
               <p>
-                Masukkan token akses Loyverse untuk {created?.code}. Jika lokasi
-                sudah terhubung, token baru akan menggantikan koneksi aktif
-                setelah seluruh pengujian berhasil.
-                Token dikirim sekali ke server, dienkripsi, dan tidak
-                ditampilkan kembali.
+                Masukkan access token Loyverse untuk {created?.code}. Token lama
+                tidak ditampilkan. Koneksi lama tetap aktif sampai token baru
+                lulus pengujian.
               </p>
               <label>
                 Token akses Loyverse
@@ -433,7 +461,11 @@ export function LocationWizard() {
           {step === 5 ? (
             <div className="form">
               <div className="notice">
-                <strong>{created?.code} siap digunakan.</strong>
+                <strong>
+                  {replacingConnection
+                    ? `Access token ${created?.code} berhasil diganti.`
+                    : `${created?.code} siap digunakan.`}
+                </strong>
                 <br />
                 Loyverse: Terhubung ✓<br />
                 Gerai: {stores.find((store) => store.id === storeId)?.name}
@@ -456,10 +488,14 @@ export function LocationWizard() {
           ) : null}
           {step > 0 && step < 5 ? (
             <button
+              className="wizardBack"
               type="button"
-              onClick={() => setStep((value) => Math.max(0, value - 1))}
+              onClick={() => {
+                if (step === 1) closeWizard();
+                else setStep((value) => Math.max(1, value - 1));
+              }}
             >
-              Kembali
+              {step === 1 ? "Batal" : "Kembali"}
             </button>
           ) : null}
           </div>

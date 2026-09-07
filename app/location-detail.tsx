@@ -219,9 +219,6 @@ export function LocationDetail({
           </div>
           <div className={styles.headingActions}>
             <span className={styles.state}>{location.is_active ? "AKTIF" : "BELUM SIAP"}</span>
-            <button type="button" className={styles.configure} onClick={onConfigurePos}>
-              Atur Loyverse
-            </button>
           </div>
         </div>
       </section>
@@ -264,7 +261,12 @@ export function LocationDetail({
 
       <section className={styles.statusGrid}>
         <article className={styles.panel}>
-          <h3>Status operasional</h3>
+          <div className={styles.panelHeading}>
+            <h3>Status operasional</h3>
+            <button type="button" className={styles.configure} onClick={onConfigurePos}>
+              Ganti access token
+            </button>
+          </div>
           <dl>
             <div><dt>POS</dt><dd>{posLabel}</dd></div>
             <div><dt>ID gerai</dt><dd>{connection?.external_store_id ?? "—"}</dd></div>
@@ -345,19 +347,22 @@ export function LocationDetail({
         <SalesView locationId={location.id} />
       </section>
 
-      <section className={styles.dangerZone}>
-        <div>
-          <span>PENGELOLAAN CART</span>
-          <h3>Hapus dari lokasi aktif</h3>
-          <p>
-            Cart akan disembunyikan dari operasional dan seluruh akses operator
-            dihentikan. Data historis tetap tersedia untuk laporan dan audit.
-          </p>
-        </div>
-        <button type="button" disabled={archiving} onClick={() => void archiveLocation()}>
-          {archiving ? "Menghapus…" : "Hapus cart"}
-        </button>
-      </section>
+      <details className={styles.advanced}>
+        <summary>Pengaturan lanjutan</summary>
+        <section className={styles.dangerZone}>
+          <div>
+            <span>PENGELOLAAN CART</span>
+            <h3>Hapus dari lokasi aktif</h3>
+            <p>
+              Akses operator dihentikan. Data historis tetap tersedia untuk
+              laporan dan audit.
+            </p>
+          </div>
+          <button type="button" disabled={archiving} onClick={() => void archiveLocation()}>
+            {archiving ? "Menghapus…" : "Hapus cart"}
+          </button>
+        </section>
+      </details>
     </div>
   );
 }
