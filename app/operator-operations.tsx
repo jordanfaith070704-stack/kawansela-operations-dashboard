@@ -153,6 +153,21 @@ export function OperatorOperations({
       name: batch.recipe_versions?.recipes?.name ?? "Batch",
       remainingMl: batch.remaining_ml,
     }));
+  const readyDrinks = Object.values(
+    batches
+      .filter((batch) => batch.status === "open" && batch.remaining_ml > 0)
+      .reduce<Record<string, { name: string; remainingMl: number; batches: number }>>(
+        (groups, batch) => {
+          const name = batch.recipe_versions?.recipes?.name ?? "Produk";
+          const current = groups[name] ?? { name, remainingMl: 0, batches: 0 };
+          current.remainingMl += batch.remaining_ml;
+          current.batches += 1;
+          groups[name] = current;
+          return groups;
+        },
+        {},
+      ),
+  );
   const refresh = () => setReloadKey((key) => key + 1);
   if (error)
     return (
@@ -249,6 +264,20 @@ export function OperatorOperations({
             <h2>Catat pergerakan—jangan menimpa angka.</h2>
             <p>Barang datang: Penerimaan stok. Koreksi jumlah: Stock Opname. Barang rusak/tumpah: Waste. Semua perubahan tersimpan dalam riwayat audit.</p>
           </div>
+        </section>
+        <section className={styles.stockGrid}>
+          <article className={styles.panel}>
+            <div className={styles.panelHead}><div><h3>Bahan baku</h3><p>Sisa bahan dan kemasan di lokasi.</p></div><span className={styles.state}>BAHAN</span></div>
+            {loading ? <div className={styles.empty}>Memuat bahan baku…</div> : inventory.length ? inventory.map((item) => (
+              <div className={styles.row} key={item.item_id}><div><strong>{item.inventory_items?.name ?? "Item"}</strong><small>{item.inventory_items?.category === "packaging" ? "Kemasan" : "Bahan produksi"}</small></div><div className={styles.quantity}><strong>{item.quantity} {item.inventory_items?.unit}</strong><small>Sisa tersedia</small></div></div>
+            )) : <div className={styles.empty}>Belum ada bahan baku.</div>}
+          </article>
+          <article className={styles.panel}>
+            <div className={styles.panelHead}><div><h3>Minuman siap jual</h3><p>Hasil produksi yang masih tersedia untuk dijual.</p></div><span className={styles.state}>SIAP JUAL</span></div>
+            {loading ? <div className={styles.empty}>Memuat stok minuman…</div> : readyDrinks.length ? readyDrinks.map((drink) => (
+              <div className={styles.row} key={drink.name}><div><strong>{drink.name}</strong><small>{drink.batches} batch · FIFO saat penjualan</small></div><div className={styles.quantity}><strong>{drink.remainingMl} ml</strong><small>{(drink.remainingMl / 150).toFixed(1)} cup</small></div></div>
+            )) : <div className={styles.empty}>Belum ada minuman siap jual. Catat produksi terlebih dahulu.</div>}
+          </article>
         </section>
         <OperatorActions
           locationId={locationId}
