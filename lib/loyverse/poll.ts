@@ -19,7 +19,9 @@ export async function fetchLoyverseReceipts(
   let cursor: string | null = null;
   for (let page = 0; page < 40; page += 1) {
     const url = new URL("https://api.loyverse.com/v1.0/receipts");
-    url.searchParams.set("store_ids", storeId);
+    // Receipts accepts a single `store_id` filter. `store_ids` is not a valid
+    // receipts parameter and Loyverse rejects it with HTTP 400.
+    url.searchParams.set("store_id", storeId);
     url.searchParams.set("created_at_min", from);
     url.searchParams.set("limit", "250");
     if (cursor) url.searchParams.set("cursor", cursor);
