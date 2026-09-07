@@ -17,6 +17,23 @@ type Location = {
 };
 type External = { id: string; name: string };
 type Recipe = { id: string; name: string };
+
+function productKey(value: string) {
+  return value
+    .replace(/^\[demo\]\s*/i, "")
+    .trim()
+    .toLocaleLowerCase("id-ID")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function matchRecipeItems(recipes: Recipe[], items: External[]) {
+  const next: Record<string, string> = {};
+  for (const recipe of recipes) {
+    const match = items.find((item) => productKey(item.name) === productKey(recipe.name));
+    if (match) next[recipe.id] = match.id;
+  }
+  return next;
+}
 const steps = [
   "Tambah Lokasi",
   "Sambungkan Loyverse",
@@ -112,12 +129,21 @@ export function LocationWizard() {
         connectionId?: string;
         stores?: External[];
         items?: External[];
+        suggestedStoreId?: string;
       }>(`/api/admin/pos-connections?locationId=${encodeURIComponent(location.id)}`, undefined, 45000);
       if (!response.ok || !body.connectionId) return;
+      const resumedItems = body.items ?? [];
+      const resumedMappings = matchRecipeItems(recipes, resumedItems);
       setConnectionId(body.connectionId);
       setStores(body.stores ?? []);
-      setItems(body.items ?? []);
-      setStep(2);
+      setItems(resumedItems);
+      setStoreId(body.suggestedStoreId ?? "");
+      setMappings(resumedMappings);
+      const readyForTest =
+        Boolean(body.suggestedStoreId) &&
+        recipes.length > 0 &&
+        recipes.every((recipe) => resumedMappings[recipe.id]);
+      setStep(readyForTest ? 4 : 2);
     } finally {
       setPending(false);
     }

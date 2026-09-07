@@ -185,12 +185,21 @@ export async function GET(request: NextRequest) {
     if (!candidate)
       return NextResponse.json({ error: "candidate_not_found" }, { status: 404 });
     const token = await resolveProviderToken(candidate.id);
-    const [stores, items] = await Promise.all([
+    const [stores, items, receipts] = await Promise.all([
       loyverse(token, "/stores"),
       loyverse(token, "/items?limit=250"),
+      loyverse(token, "/receipts?limit=10"),
     ]);
+    const recentReceipts = Array.isArray(receipts.receipts)
+      ? receipts.receipts
+      : [];
+    const suggestedStoreId = recentReceipts.find(
+      (receipt: { store_id?: unknown }) =>
+        typeof receipt.store_id === "string" && receipt.store_id,
+    )?.store_id;
     return NextResponse.json({
       connectionId: candidate.id,
+      suggestedStoreId,
       stores: Array.isArray(stores.stores)
         ? stores.stores.map((store: { id: string; name: string }) => ({ id: store.id, name: store.name }))
         : [],
