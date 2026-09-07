@@ -1,0 +1,89 @@
+.wrap {
+  margin-top: 18px;
+  border-top: 1px solid #ddd;
+  padding-top: 18px;
+}
+.wrap > div:first-child span {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+  color: #666;
+}
+.wrap h3 {
+  margin: 5px 0;
+  font:
+    500 22px Georgia,
+    serif;
+}
+.wrap p {
+  margin: 0;
+  color: #666;
+  font-size: 12px;
+}
+.secondary,
+.primary {
+  margin-top: 12px;
+  border: 1px solid #111;
+  background: #fff;
+  color: #111;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.primary {
+  background: #111;
+  color: #fff;
+}
+.secondary:disabled,
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.form {
+  margin-top: 14px;
+  max-width: 620px;
+  border: 1px solid #111;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: #fff;
+}
+.form label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.form input,
+.form select {
+  border: 1px solid #ccc;
+  padding: 10px;
+  background: #fff;
+  color: #111;
+  font: inherit;
+}
+.form p,
+.form .primary {
+  grid-column: 1/-1;
+}
+.error,
+.success {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid #111;
+  font-size: 12px;
+}
+.success {
+  background: #eee;
+}
+@media (max-width: 600px) {
+  .form {
+    grid-template-columns: 1fr;
+  }
+  .form p,
+  .form .primary {
+    grid-column: auto;
+  }
+}

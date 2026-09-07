@@ -1,0 +1,165 @@
+.wrap {
+  display: grid;
+  gap: 14px;
+}
+.periods { display:flex; gap:4px; padding:4px; width:max-content; max-width:100%; overflow-x:auto; border:1px solid #deded9; border-radius:9px; background:#fff; }
+.periods button { border:0; border-radius:6px; padding:8px 12px; background:transparent; color:#666; font-size:11px; font-weight:800; white-space:nowrap; }
+.periods button[aria-pressed="true"] { background:#111; color:#fff; }
+.chartEmpty { align-self:center; margin:auto; color:#777; font-size:12px; }
+.liveBar{display:flex;align-items:center;gap:7px;min-height:28px;color:#4f4f4b;font-size:11px;font-weight:700}.liveBar small{color:#777;font-weight:500}.liveBar button{margin-left:auto;border:0;background:transparent;color:#555;font:700 11px Inter,ui-sans-serif,system-ui,sans-serif;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.liveBar button:disabled{cursor:wait;color:#999}.liveDot,.liveStale{width:7px;height:7px;border-radius:50%;flex:none;background:#111}.liveStale{background:#fff;border:1px solid #111}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.metric,
+.panel {
+  background: #fff;
+  border: 1px solid #e5e5e0;
+  border-radius: 12px;
+  padding: 17px;
+}
+.metric span {
+  display: block;
+  color: #777;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+}
+.metric strong {
+  display: block;
+  font:
+    500 25px Georgia,
+    serif;
+  margin-top: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1.25fr 0.75fr;
+  gap: 14px;
+}
+.panel h2 {
+  font:
+    500 20px Georgia,
+    serif;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.sub {
+  font-size: 11px;
+  color: #71716c;
+  margin-top: 4px;
+}
+.chart {
+  height: 190px;
+  display: flex;
+  align-items: end;
+  gap: 7px;
+  padding-top: 20px;
+}
+.barGroup {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+.bar {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  background: #111;
+  border-radius: 3px 3px 0 0;
+}
+.barGroup small {
+  display: block;
+  margin-top: 7px;
+  color: #888;
+  font-size: 9px;
+}
+.tableWrap {
+  overflow: auto;
+  margin-top: 12px;
+  border-top: 1px solid #ecece8;
+  box-shadow: inset -18px 0 15px -18px #111;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.table th {
+  text-align: left;
+  color: #777;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 9px;
+  border-bottom: 1px solid #deded9;
+}
+.table td {
+  padding: 11px 9px;
+  border-bottom: 1px solid #ecece8;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.empty {
+  padding: 20px;
+  color: #777;
+  text-align: center;
+  font-size: 12px;
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #d7d7d2;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.mix {
+  margin-top: 12px;
+}
+.mixRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid #ecece8;
+  font-size: 12px;
+}
+.mixRow strong{font-size:11px;font-weight:600;color:#555;text-align:right}
+@media (max-width: 850px) {
+  .metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 520px) {
+  .metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+  .metric,
+  .panel {
+    padding: 14px;
+  }
+  .metric strong {
+    font-size: 21px;
+  }
+  .chart {
+    height: 165px;
+    padding-top: 14px;
+  }
+}
+@media (max-width:520px){.liveBar{flex-wrap:wrap}.liveBar small{width:calc(100% - 14px);margin-left:14px}.liveBar button{margin-left:auto}}
+
+.metric,.panel { min-width:0; }
+.metric strong { overflow-wrap:anywhere; }
+.barGroup small { font-size:10px; color:#777; }
+.tableWrap { overscroll-behavior-inline:contain; }
+.table { min-width:610px; }
+@media (max-width: 900px) { .metrics { grid-template-columns:1fr 1fr; } .grid { grid-template-columns:1fr; } }
+@media (max-width: 520px) { .tableWrap { margin-left:-3px; margin-right:-3px; } .table { font-size:11px; } }
