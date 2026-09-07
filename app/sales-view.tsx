@@ -33,6 +33,12 @@ const money = new Intl.NumberFormat("id-ID", {
   currency: "IDR",
   maximumFractionDigits: 0,
 });
+const compactMoney = new Intl.NumberFormat("id-ID", {
+  style: "currency",
+  currency: "IDR",
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 const indonesiaOffsetHours: Record<string, number> = {
   "Asia/Jakarta": 7,
@@ -270,6 +276,7 @@ export function SalesView({
             return date ? date.toLocaleDateString("id-ID", { timeZone: displayTimeZone, day: "2-digit", month: "short" }) : "—";
           })(),
       value: row.revenue,
+      cups: row.cups,
     })),
     [displayTimeZone, period, rollups],
   );
@@ -327,24 +334,46 @@ export function SalesView({
       </section>
       <section className={styles.grid}>
         <article className={styles.panel}>
-          <h2>{period === "day" ? "Penjualan per jam" : "Penjualan per hari"}</h2>
-          <div className={styles.sub}>
-            Ringkasan transaksi yang sudah diproses untuk {periodLabel}.
-          </div>
-          <div className={styles.chart}>
-            {chart.map((entry) => (
-              <div className={styles.barGroup} key={entry.label}>
-                <span
-                  className={styles.bar}
-                  style={{
-                    height: `${Math.max(2, (entry.value / max) * 155)}px`,
-                  }}
-                />
-                <small>{entry.label}</small>
+          <div className={styles.chartHead}>
+            <div>
+              <h2>{period === "day" ? "Penjualan per jam" : "Penjualan per hari"}</h2>
+              <div className={styles.sub}>
+                Hanya waktu yang memiliki transaksi.
               </div>
-            ))}
-            {!loading && !chart.length ? <div className={styles.chartEmpty}>Belum ada data.</div> : null}
+            </div>
+            {!loading && chart.length ? (
+              <span className={styles.chartCount}>
+                {chart.length} {period === "day" ? "jam" : "hari"} aktif
+              </span>
+            ) : null}
           </div>
+          {loading ? (
+            <div className={styles.chartEmpty}>Memuat penjualan…</div>
+          ) : chart.length ? (
+            <div className={styles.chartViewport}>
+              <div className={styles.chart}>
+                {chart.map((entry) => (
+                  <div className={styles.barGroup} key={entry.label}>
+                    <strong>{compactMoney.format(entry.value)}</strong>
+                    <span
+                      className={styles.bar}
+                      style={{
+                        height: `${Math.max(14, (entry.value / max) * 128)}px`,
+                      }}
+                      title={`${entry.label} · ${money.format(entry.value)} · ${entry.cups} cup`}
+                    />
+                    <small>{entry.label}</small>
+                    <em>{entry.cups} cup</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className={styles.chartEmpty}>
+              <strong>Belum ada penjualan</strong>
+              <span>Grafik akan muncul setelah transaksi pertama masuk.</span>
+            </div>
+          )}
         </article>
         <article className={styles.panel}>
           <h2>Metode pembayaran</h2>
