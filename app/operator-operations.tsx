@@ -41,7 +41,8 @@ type Batch = {
   recipe_versions: { version: number; recipes: { name: string } | null } | null;
 };
 
-type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean };
+type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean; expectedCash: number; expectedQris: number; actualCash: number | null; actualQris: number | null; cashVariance: number | null; qrisVariance: number | null };
+type OpnameLine = { system_quantity: number; physical_quantity: number; inventory_items: { name: string; unit: string } | null };
 const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 function jakartaParts() {
   return Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
@@ -61,7 +62,9 @@ export function OperatorOperations({
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [masterItems, setMasterItems] = useState<MasterItem[]>([]);
-  const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false });
+  const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false, expectedCash: 0, expectedQris: 0, actualCash: null, actualQris: null, cashVariance: null, qrisVariance: null });
+  const [lastOpname, setLastOpname] = useState<OpnameLine[]>([]);
+  const [todayPayments, setTodayPayments] = useState({ cash: 0, qris: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -95,9 +98,9 @@ export function OperatorOperations({
             .eq("location_id", locationId)
             .order("produced_at", { ascending: false }),
           db.from("inventory_items").select("id,name,unit").order("name"),
-          db.from("sales").select("id").eq("location_id", locationId).gte("occurred_at", dayStart.toISOString()),
-          db.from("stock_counts").select("id").eq("location_id", locationId).gte("counted_at", dayStart.toISOString()).limit(1),
-          db.from("daily_reconciliations").select("closed_at").eq("location_id", locationId).eq("business_date", businessDate).maybeSingle(),
+          db.from("sales").select("id,total,payment_method").eq("location_id", locationId).gte("occurred_at", dayStart.toISOString()),
+          db.from("stock_counts").select("id,stock_count_lines(system_quantity,physical_quantity,inventory_items(name,unit))").eq("location_id", locationId).gte("counted_at", dayStart.toISOString()).order("counted_at", { ascending: false }).limit(1).maybeSingle(),
+          db.from("daily_reconciliations").select("closed_at,expected_cash,expected_qris,actual_cash,actual_qris,cash_variance,qris_variance").eq("location_id", locationId).eq("business_date", businessDate).maybeSingle(),
         ]);
       if (
         inventoryResult.error ||
@@ -113,7 +116,14 @@ export function OperatorOperations({
       setRecipes((recipeResult.data ?? []) as unknown as Recipe[]);
       setBatches((batchResult.data ?? []) as unknown as Batch[]);
       setMasterItems((itemResult.data ?? []) as MasterItem[]);
-      setCloseStatus({ sales: salesResult.data?.length ?? 0, counted: Boolean(countResult.data?.length), reconciled: Boolean(reconciliationResult.data), closed: Boolean(reconciliationResult.data?.closed_at) });
+      const sales = (salesResult.data ?? []) as Array<{ total: number; payment_method: string }>;
+      setTodayPayments(sales.reduce((totals, sale) => ({
+        cash: totals.cash + (sale.payment_method === "cash" ? Number(sale.total) : 0),
+        qris: totals.qris + (["qris_static", "qris_provider"].includes(sale.payment_method) ? Number(sale.total) : 0),
+      }), { cash: 0, qris: 0 }));
+      const reconciliation = reconciliationResult.data as { closed_at: string | null; expected_cash: number; expected_qris: number; actual_cash: number | null; actual_qris: number | null; cash_variance: number | null; qris_variance: number | null } | null;
+      setLastOpname(((countResult.data as { stock_count_lines?: OpnameLine[] } | null)?.stock_count_lines ?? []) as OpnameLine[]);
+      setCloseStatus({ sales: sales.length, counted: Boolean(countResult.data), reconciled: Boolean(reconciliation), closed: Boolean(reconciliation?.closed_at), expectedCash: Number(reconciliation?.expected_cash ?? 0), expectedQris: Number(reconciliation?.expected_qris ?? 0), actualCash: reconciliation?.actual_cash ?? null, actualQris: reconciliation?.actual_qris ?? null, cashVariance: reconciliation?.cash_variance ?? null, qrisVariance: reconciliation?.qris_variance ?? null });
       setLoading(false);
     })();
   }, [locationId, reloadKey]);
@@ -418,10 +428,19 @@ export function OperatorOperations({
           <div className={styles.sync}>{closeStatus.closed ? "Tutup hari selesai." : closeStatus.counted && closeStatus.reconciled ? "Siap ditutup." : "Belum siap ditutup."}</div>
         </article>
       </section>
+      <article className={styles.panel}>
+        <div className={styles.panelHead}><div><h3>Rekap hasil hari ini</h3><p>Hasil otomatis dari penjualan Loyverse, opname, dan rekonsiliasi.</p></div></div>
+        <div className={styles.row}><div><strong>Cash</strong><small>Sistem {rupiah.format(closeStatus.reconciled ? closeStatus.expectedCash : todayPayments.cash)} · aktual {closeStatus.actualCash === null ? "belum diisi" : rupiah.format(closeStatus.actualCash)}</small></div><div className={styles.quantity}><strong>{closeStatus.cashVariance === null ? "—" : rupiah.format(closeStatus.cashVariance)}</strong><small>Selisih cash</small></div></div>
+        <div className={styles.row}><div><strong>QRIS</strong><small>Dari Loyverse {rupiah.format(closeStatus.reconciled ? closeStatus.expectedQris : todayPayments.qris)} · aktual {closeStatus.actualQris === null ? "belum diisi" : rupiah.format(closeStatus.actualQris)}</small></div><div className={styles.quantity}><strong>{closeStatus.qrisVariance === null ? "—" : rupiah.format(closeStatus.qrisVariance)}</strong><small>Selisih QRIS</small></div></div>
+        <div className={styles.row}><div><strong>Stock opname terakhir</strong><small>{lastOpname.length ? `${lastOpname.length} item dihitung` : "Belum ada opname hari ini"}</small></div><div className={styles.quantity}><strong>{lastOpname.length ? lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).length : "—"}</strong><small>Item berselisih</small></div></div>
+        {lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).map((line, index) => <div className={styles.row} key={`${line.inventory_items?.name}-${index}`}><div><strong>{line.inventory_items?.name ?? "Item"}</strong><small>Sistem {line.system_quantity} {line.inventory_items?.unit}</small></div><div className={styles.quantity}><strong>{Number(line.physical_quantity) - Number(line.system_quantity)} {line.inventory_items?.unit}</strong><small>Selisih opname</small></div></div>)}
+      </article>
       <OperatorActions
         locationId={locationId}
         recipeVersions={recipeVersions}
         countItems={countItems}
+        expectedCashSales={todayPayments.cash}
+        expectedQrisSales={todayPayments.qris}
         visibleKinds={["count", "close"]}
         onCommitted={refresh}
       />
