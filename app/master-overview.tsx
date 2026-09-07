@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./operator-home.module.css";
 
@@ -29,9 +29,8 @@ export function MasterOverview() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    void (async () => {
-      setReady(false);
+  const load = useCallback(async (initial = false) => {
+      if (initial) setReady(false);
       setError("");
       const db = createClient();
       const [salesResult, locationsResult, connectionsResult] = await Promise.all([
@@ -66,8 +65,21 @@ export function MasterOverview() {
       setLocations(locationRows ?? []);
       setConnections(connectionRows ?? []);
       setReady(true);
-    })();
   }, []);
+  useEffect(() => {
+    void load(true);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [load]);
   const active = locations.filter((location) => location.is_active).length;
   return (
     <div className={styles.wrap}>
