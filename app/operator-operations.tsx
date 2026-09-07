@@ -65,6 +65,7 @@ export function OperatorOperations({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
   useEffect(() => {
     void (async () => {
       setLoading(true);
@@ -329,52 +330,19 @@ export function OperatorOperations({
         </article>
       </div>
     );
-  if (view === "Resep")
-    return (
-      <div className={styles.wrap}>
-        <article className={styles.panel}>
-          <div className={styles.panelHead}>
-            <div>
-              <h3>Resep aktif</h3>
-              <p>Standar produksi dari Kawansela Master.</p>
-            </div>
-          </div>
-          {recipes.map((recipe) => {
-            const version = recipe.recipe_versions.find(
-              (item) => item.version === recipe.active_version,
-            );
-            return (
-              <details className={styles.row} key={recipe.id}>
-                <summary>
-                  <strong>{recipe.name}</strong>
-                  <small>V{recipe.active_version} · {version?.batch_ml ?? 900} ml · {version?.serving_ml ?? 150} ml/cup</small>
-                </summary>
-                <div className={styles.recipeGuide}>
-                  <div className={styles.recipeSummary}>
-                    <strong>{version?.note || "Standar produksi"}</strong>
-                    <span>Target {version?.batch_ml ?? 900} ml · {Math.floor((version?.batch_ml ?? 900) / (version?.serving_ml ?? 150))} cup × {version?.serving_ml ?? 150} ml</span>
-                  </div>
-                  <ol className={styles.recipeSteps}>
-                    <li>Siapkan wadah produksi bersih dan ukur bahan berikut.</li>
-                    {(version?.recipe_version_lines ?? []).map((line, index) => (
-                      <li key={`${line.inventory_items?.name}-${index}`}>
-                        <strong>{line.inventory_items?.name ?? "Bahan"}</strong>
-                        <span>{line.quantity} {line.inventory_items?.unit ?? ""} · biaya {rupiah.format(Number(line.quantity) * Number(line.inventory_items?.standard_unit_cost ?? 0))}</span>
-                      </li>
-                    ))}
-                    <li>Setelah sesuai standar, catat sebagai <strong>Produksi</strong> untuk membuat batch siap jual.</li>
-                    <li>Labeli batch: gunakan hingga {version?.carry_days ?? "—"} hari; sajikan {version?.serving_ml ?? 150} ml per cup.</li>
-                  </ol>
-                </div>
-              </details>
-            );
-          })}
-          {!loading && !recipes.length ? (
-            <div className={styles.empty}>Belum ada resep aktif.</div>
-          ) : null}
-        </article>
-      </div>
-    );
+  if (view === "Resep") {
+    const recipe = recipes.find((item) => item.id === selectedRecipeId);
+    const version = recipe?.recipe_versions.find((item) => item.version === recipe.active_version);
+    if (recipe && version) return <div className={styles.wrap}><article className={styles.recipeDetail}>
+      <button type="button" className={styles.backButton} onClick={() => setSelectedRecipeId(null)}>← Semua resep</button>
+      <header className={styles.recipeHero}><div><span>RESEP AKTIF · V{version.version}</span><h2>{recipe.name}</h2><p>{version.note && version.note !== "New Recipe" ? version.note : "Standar produksi dari Kawansela Master."}</p></div><b>AKTIF</b></header>
+      <div className={styles.recipeMetrics}><div><span>Hasil batch</span><strong>{version.batch_ml} ml</strong></div><div><span>Porsi</span><strong>{version.serving_ml} ml</strong></div><div><span>Estimasi hasil</span><strong>{Math.floor(version.batch_ml / version.serving_ml)} cup</strong></div><div><span>Gunakan ≤</span><strong>{version.carry_days} hari</strong></div></div>
+      <section className={styles.recipeSection}><div><span>01 · SIAPKAN</span><h3>Bahan</h3></div><div className={styles.ingredientList}>{version.recipe_version_lines.map((line,index)=><div key={`${line.inventory_items?.name}-${index}`}><span>{line.quantity} {line.inventory_items?.unit}</span><strong>{line.inventory_items?.name ?? "Bahan"}</strong></div>)}</div></section>
+      <section className={styles.recipeSection}><div><span>02 · KERJAKAN</span><h3>Urutan produksi</h3></div><ol className={styles.workSteps}><li>Siapkan wadah produksi bersih.</li><li>Ukur bahan mengikuti daftar di atas.</li><li>Campurkan sesuai standar produk.</li><li>Buka menu <strong>Produksi</strong> untuk mencatat batch yang dibuat.</li></ol></section>
+      <footer className={styles.recipeCallout}>Operator hanya menjalankan resep ini. Perubahan nama, bahan, atau versi dilakukan oleh Master.</footer>
+    </article></div>;
+    return <div className={styles.wrap}><article className={styles.panel}><div className={styles.panelHead}><div><h3>Resep kerja</h3><p>Pilih produk, ikuti takaran, lalu catat produksi.</p></div></div><div className={styles.recipeCards}>{recipes.map((item)=>{const active=item.recipe_versions.find((entry)=>entry.version===item.active_version);return <button type="button" className={styles.recipeCard} key={item.id} onClick={()=>setSelectedRecipeId(item.id)}><span>AKTIF · V{item.active_version}</span><strong>{item.name}</strong><small>{active?.batch_ml ?? 900} ml · {active?.serving_ml ?? 150} ml/cup</small><b>Lihat panduan →</b></button>;})}</div>{!loading&&!recipes.length?<div className={styles.empty}>Belum ada resep aktif.</div>:null}</article></div>;
+  }
   const today = new Date().toLocaleDateString("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" });
   return (
     <div className={styles.wrap}>
