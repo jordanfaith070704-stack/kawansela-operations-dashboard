@@ -74,9 +74,12 @@ function formatSaleTime(value: string, period: Period, timeZone: string) {
 export function SalesView({
   locationId,
   master = false,
+  autoSync = true,
 }: {
   locationId: string | null;
   master?: boolean;
+  /** Set false when the enclosing screen already owns the location sync. */
+  autoSync?: boolean;
 }) {
   const [rows, setRows] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
@@ -118,7 +121,7 @@ export function SalesView({
       .limit(100);
     if (locationId) query = query.eq("location_id", locationId);
     try {
-    if (master && !locationId) {
+    if (autoSync && master && !locationId) {
       const { data: activeConnections } = await db
         .from("pos_connections")
         .select("location_id")
@@ -134,7 +137,7 @@ export function SalesView({
           }),
         ),
       );
-    } else if (locationId) {
+    } else if (autoSync && locationId) {
       // Pull only from the browser's own cart. The API validates the session
       // and performs the provider call on the server.
       await fetch("/api/loyverse/sync", {
@@ -198,7 +201,7 @@ export function SalesView({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [locationId, master, period]);
+  }, [autoSync, locationId, master, period]);
   useEffect(() => {
     void load();
     const interval = window.setInterval(() => {
