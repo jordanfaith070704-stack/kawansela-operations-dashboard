@@ -190,7 +190,8 @@ export async function processLoyverseReceipts(
         !externalReceiptId ||
         !receipt.store_id ||
         !occurredAt ||
-        !Array.isArray(receipt.line_items)
+        !Array.isArray(receipt.line_items) ||
+        receipt.line_items.length === 0
       ) {
         result.pending++;
         result.warnings.push(`${prefix}: data receipt tidak lengkap.`);
@@ -238,6 +239,16 @@ export async function processLoyverseReceipts(
           );
           continue;
         }
+        // A missing amount is incomplete provider data, not a complimentary
+        // drink. Keep the receipt retryable while allowing an explicit zero.
+        if (
+          typeof line.total_money !== "number" ||
+          !Number.isFinite(line.total_money) ||
+          line.total_money < 0
+        ) {
+          failures.push(`Baris ${index + 1} tidak memiliki total harga yang valid.`);
+          continue;
+        }
         const mapping = await db
           .from("pos_product_mappings")
           .select("recipe_id")
@@ -254,7 +265,7 @@ export async function processLoyverseReceipts(
           p_pos_connection_id: connectionId,
           p_recipe_id: mapping.data.recipe_id,
           p_quantity: line.quantity,
-          p_total: line.total_money ?? 0,
+          p_total: line.total_money,
           p_payment: mappedPayment.method,
           p_occurred_at: occurredAt,
           p_external_id: lineExternalId(connectionId, receipt, line, index),

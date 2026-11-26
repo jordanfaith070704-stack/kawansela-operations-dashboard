@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { LocationWizard } from "./location-wizard";
@@ -33,6 +33,17 @@ const operatorNav = [
   "Resep",
   "Tutup Hari",
 ];
+const operatorBottomNav = ["Hari Ini", "Penjualan", "Stok", "Tutup Hari"];
+
+function NavigationIcon({ item }: { item: string }) {
+  const paths: Record<string, string> = {
+    "Hari Ini": "m3 11 9-8 9 8 M5 10v10h14V10 M9 20v-7h6v7",
+    Penjualan: "M6 3h12v18l-3-2-3 2-3-2-3 2Z M9 7h6 M9 11h6 M9 15h3",
+    Stok: "m3 7 9-4 9 4-9 4Z M3 7v10l9 4 9-4V7 M12 11v10",
+    "Tutup Hari": "M8 12l3 3 5-6 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
+  };
+  return <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[item]} /></svg>;
+}
 const masterNav = [
   "Ringkasan",
   "Lokasi",
@@ -193,8 +204,20 @@ export function DashboardShell({
   const [active, setActive] = useState(navigation[0]);
   const [posStatus, setPosStatus] = useState("Loyverse · Memuat status");
   const [selectedMasterLocationId, setSelectedMasterLocationId] = useState<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const previousActive = useRef(active);
   const current = (isMaster ? master : operator)[active];
+  const navigate = useCallback((view: string) => {
+    setActive(view);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, []);
+  useEffect(() => {
+    document.title = `${active} · Kawansela Operations`;
+    if (previousActive.current !== active) headingRef.current?.focus({ preventScroll: true });
+    previousActive.current = active;
+  }, [active]);
   const loadPosStatus = useCallback(async () => {
+    try {
       const { data, error } = await createClient().rpc("get_pos_health", {
         p_location_id: isMaster ? null : locationId,
       });
@@ -214,11 +237,18 @@ export function DashboardShell({
         setPosStatus("Loyverse · Perlu perhatian");
         return;
       }
+      if (rows.some((row) => !row.last_successful_sync_at || Date.now() - Date.parse(row.last_successful_sync_at) > 5 * 60_000)) {
+        setPosStatus("Loyverse · Periksa sinkronisasi");
+        return;
+      }
       setPosStatus(
         isMaster
           ? `Loyverse · ${rows.length} koneksi aktif`
           : "Loyverse · Terhubung",
       );
+    } catch {
+      setPosStatus("Loyverse · Status tidak tersedia");
+    }
   }, [isMaster, locationId]);
   useEffect(() => {
     void loadPosStatus();
@@ -240,27 +270,24 @@ export function DashboardShell({
     router.refresh();
   }
   return (
-    <div className={styles.app}>
+    <div className={`${styles.app} ${!isMaster ? styles.operatorShell : ""}`}>
       <header className={styles.header}>
         <div className={styles.brand}>
-          <span className={styles.mark} aria-hidden="true" />
-          <span>
-            kawan<span className={styles.brandDot}>.</span>sela
-          </span>
+          <span aria-label="Kawansela">kawansela<span className={styles.brandDot}>.</span></span>
         </div>
-        <nav className={styles.nav} aria-label="Navigasi utama">
+        {isMaster && <nav className={styles.nav} aria-label="Navigasi utama">
           {navigation.map((item) => (
             <button
               key={item}
               type="button"
               aria-pressed={item === active}
               className={`${styles.navButton} ${item === active ? styles.navButtonActive : ""}`}
-              onClick={() => setActive(item)}
+              onClick={() => navigate(item)}
             >
               {item}
             </button>
           ))}
-        </nav>
+        </nav>}
         <div className={styles.account}>
           {locationName}
           <button
@@ -273,29 +300,27 @@ export function DashboardShell({
         </div>
       </header>
       <div className={styles.context} aria-label="Konteks halaman">
-        <span className="active">{current.kicker}</span>
+        {isMaster && <span className="active">{current.kicker}</span>}
         <span>{locationMeta}</span>
       </div>
-      <nav className={styles.mobileNav} aria-label="Navigasi seluler">
+      {isMaster && <nav className={styles.mobileNav} aria-label="Navigasi seluler">
         {navigation.map((item) => (
           <button
             key={item}
             type="button"
             aria-pressed={item === active}
             className={item === active ? "active" : ""}
-            onClick={() => setActive(item)}
+            onClick={() => navigate(item)}
           >
             {item}
           </button>
         ))}
-      </nav>
+      </nav>}
       <main className={styles.main}>
         <div className={styles.pageBar}>
           <div>
-            <div className={styles.kicker}>
-              {isMaster ? "KAWANSELA MASTER" : "OPERASIONAL LOKASI"}
-            </div>
-            <h1 className={styles.title}>{active}</h1>
+            {isMaster && <div className={styles.kicker}>KAWANSELA MASTER</div>}
+            <h1 ref={headingRef} tabIndex={-1} className={styles.title}>{active}</h1>
           </div>
           <span className={styles.sync} aria-live="polite">
             {posStatus}
@@ -313,7 +338,7 @@ export function DashboardShell({
         ) : isMaster && active === "Pengaturan Akun" ? (
           <AccountSettings />
         ) : !isMaster && active === "Hari Ini" && locationId ? (
-          <OperatorHome locationId={locationId} />
+          <OperatorHome locationId={locationId} onNavigate={navigate} />
         ) : !isMaster && active === "Penjualan" && locationId ? (
           <SalesView locationId={locationId} />
         ) : !isMaster &&
@@ -322,6 +347,7 @@ export function DashboardShell({
           <OperatorOperations
             view={active as "Produksi" | "Stok" | "Resep" | "Tutup Hari"}
             locationId={locationId}
+            onNavigate={navigate}
           />
         ) : (
           <>
@@ -355,6 +381,15 @@ export function DashboardShell({
           </>
         )}
       </main>
+      {!isMaster && <nav className={styles.bottomNav} aria-label="Navigasi operator">
+        {operatorBottomNav.map((item) => {
+          const selected = item === active || (item === "Stok" && ["Produksi", "Resep"].includes(active));
+          return <button key={item} type="button" aria-current={selected ? "page" : undefined} onClick={() => navigate(item)}>
+            <NavigationIcon item={item} />
+            <span>{item === "Hari Ini" ? "Hari ini" : item === "Tutup Hari" ? "Tutup hari" : item}</span>
+          </button>;
+        })}
+      </nav>}
     </div>
   );
 }

@@ -11,8 +11,7 @@ export default async function LoginPage({
     <main className={styles.page}>
       <section className={styles.card}>
         <div className={styles.brand}>
-          <span className={styles.mark} aria-hidden="true" />
-          <span className={styles.wordmark}>kawan.sela</span>
+          <span className={styles.wordmark}>kawansela<span className={styles.brandDot}>.</span></span>
         </div>
         <div className={styles.eyebrow}>OPERATIONS</div>
         <h1 className={styles.title}>Masuk</h1>

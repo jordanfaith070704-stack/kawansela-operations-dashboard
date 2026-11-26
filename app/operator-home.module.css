@@ -225,3 +225,93 @@
 @media (max-width: 520px) { .recapHead { flex-direction:column; } .recapPeriods { width:100%; } .recapPeriods button { flex:1; } }
 @media (max-width: 420px) { .numbers,.recapNumbers { grid-template-columns:1fr; } .number:last-child { grid-column:auto; } .error { align-items:flex-start; flex-direction:column; } .retry { width:100%; } }
 @media (max-width: 420px) { .historyRow { align-items:flex-start; } .historyRow small { max-width:210px; } }
+
+/* Shared operational controls: comfortable on a phone and consistent with Kawansela. */
+.taskTabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 16px; }
+.taskTabs button,.taskButton { min-height:48px; border:1px solid var(--line,#d7ccbb); border-radius:12px; padding:11px 15px; background:var(--paper,#fffcf6); color:var(--ink,#151811); font:inherit; font-size:1rem; line-height:1.3; font-weight:700; cursor:pointer; }
+.taskTabs button { flex:1; }
+.taskTabs button[aria-current="page"],.taskTabs button[aria-pressed="true"] { background:#244d36; border-color:#244d36; color:#fff; }
+.taskTabs button:focus-visible,.taskButton:focus-visible,.homeActions button:focus-visible,.homeRevenue button:focus-visible { outline:3px solid #244d36; outline-offset:3px; }
+.taskButton:disabled { opacity:.65; cursor:wait; }
+.warning { padding:14px 16px; border:1px solid #d4b376; border-left:4px solid #9c5c00; border-radius:12px; background:#fff3d6; color:#623b00; font-size:1rem; line-height:1.5; }
+.warning strong { display:block; }
+.warning p { margin:5px 0 0; color:inherit; font-size:1rem; }
+.wrap { font-size:1rem; line-height:1.5; }
+.panel h3 { font-family:inherit; font-size:1.2rem; font-weight:750; }
+.panel p,.next p,.sync,.empty { font-size:1rem; }
+.row strong { font-size:1rem; }
+.row small { font-size:.875rem; line-height:1.5; color:#605a4f; }
+.row .quantity strong { font-family:inherit; font-size:1.125rem; font-weight:750; }
+.row { flex-wrap:wrap; }
+.row > div:first-child { flex:1 1 150px; }
+.quantity { margin-left:auto; max-width:100%; overflow-wrap:anywhere; }
+.state,.tag { font-size:.875rem; letter-spacing:.02em; }
+.retry { min-height:48px; font-size:1rem; padding:11px 15px; }
+
+.home { --home-cream:#f3ebdd; --home-paper:#fffcf6; --home-ink:#151811; --home-orange:#ff6b22; --home-green:#244d36; --home-line:#d7ccbb; --home-muted:#605a4f; color:var(--home-ink); gap:18px; }
+.home h2 { margin:0; font-family:inherit; font-size:1.25rem; line-height:1.3; font-weight:800; letter-spacing:-.025em; }
+.home .panel { background:var(--home-paper); border-color:var(--home-line); border-radius:16px; padding:18px; }
+.home .panel p { color:var(--home-muted); }
+.home .panelHead { flex-wrap:wrap; align-items:center; }
+.home .row { border-color:var(--home-line); }
+.home .row small { color:var(--home-muted); }
+.home .empty { background:var(--home-cream); border-color:var(--home-line); color:var(--home-muted); }
+.homeFreshness { display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:.875rem; color:var(--home-muted); }
+.homeFreshness > span { min-width:0; }
+.homeFreshness .taskButton { flex:none; background:var(--home-paper); border-color:var(--home-line); }
+.homeAlerts { border:1px solid #d4b376; border-radius:16px; background:#fff3d6; padding:17px; }
+.homeAlerts h2 { margin:0 0 5px; color:#623b00; }
+.homeAlertRow { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding:13px 0; }
+.homeAlertRow + .homeAlertRow { border-top:1px solid #dfc794; }
+.homeAlertRow:last-child { padding-bottom:0; }
+.homeAlertRow > div { min-width:0; flex:1 1 170px; }
+.homeAlertRow strong { font-size:1rem; }
+.homeAlertRow p { font-size:.875rem; line-height:1.55; margin:4px 0 0; color:#623b00; overflow-wrap:anywhere; }
+.homeAlertRow .taskButton { background:var(--home-paper); border-color:#b68b4f; }
+.homeEmptyTag,.homeLowTag { border-radius:20px; padding:5px 10px; font-size:.875rem; font-weight:750; }
+.homeEmptyTag { background:#f8dfd8; color:#8d2b1a; }
+.homeLowTag { background:#f2d687; color:#623b00; }
+.homeActions { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.homeActions button { min-width:0; min-height:90px; display:flex; flex-direction:column; justify-content:center; text-align:left; gap:5px; border:1px solid var(--home-ink); border-radius:14px; padding:15px; background:var(--home-paper); color:var(--home-ink); font:inherit; cursor:pointer; }
+.homeActions button:first-child { background:var(--home-orange); box-shadow:0 3px 0 var(--home-ink); }
+.homeActions strong { font-size:1rem; font-weight:800; }
+.homeActions span { font-size:.875rem; line-height:1.45; }
+.homeRevenue { background:var(--home-green); color:white; border-radius:16px; padding:21px; }
+.homeRevenue > span { display:block; font-size:1rem; }
+.homeRevenue > strong { display:block; font-size:clamp(1.75rem,6vw,2.5rem); line-height:1.25; margin:6px 0 20px; font-weight:800; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.homeSalesMeta { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding-top:14px; border-top:1px solid #ffffff50; }
+.homeSalesMeta span { display:block; font-size:.875rem; color:#f0f5e9; }
+.homeSalesMeta b { display:block; font-size:1rem; margin-top:4px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.homeRevenue p { color:#f0f5e9; font-size:.875rem; line-height:1.5; margin:16px 0 0; }
+.homeRevenue button { min-height:48px; margin-top:14px; padding:11px 15px; border:1px solid #ffffff80; border-radius:12px; background:transparent; color:#fff; font:inherit; font-size:1rem; line-height:1.3; font-weight:700; cursor:pointer; }
+.homeRevenue button:focus-visible { outline-color:#f5d953; }
+.homeReadyTotal { font-size:1.75rem; font-weight:800; font-variant-numeric:tabular-nums; }
+.homeReadyTotal span { font-size:1rem; font-weight:500; }
+.homePos { padding:17px; border:1px solid var(--home-line); border-radius:14px; background:var(--home-cream); }
+.homePos strong { display:block; font-size:1rem; }
+.homePos p { font-size:.875rem; color:var(--home-muted); line-height:1.6; margin:6px 0 12px; }
+.homePos .taskButton { background:var(--home-paper); }
+@media (max-width:420px) { .homeSalesMeta { grid-template-columns:1fr 1fr; } .homeSalesMeta > div:first-child { grid-column:1 / -1; display:flex; justify-content:space-between; align-items:center; } .homeSalesMeta > div:first-child b { margin:0; } .home .panel { padding:16px; } .homeActions { gap:10px; } .homeActions button { padding:12px; } }
+@media (prefers-reduced-motion:reduce) { .home * { scroll-behavior:auto; } }
+
+/* Brand alignment for the operational and master views that share these cards. */
+.wrap .panel,.wrap .number,.wrap .recipeCard,.wrap .recipeDetail { background:var(--paper,#fffcf6); border-color:var(--line,#d7ccbb); color:var(--ink,#151811); }
+.wrap .panel h2 { font-size:1.25rem; line-height:1.3; margin:0; font-weight:800; }
+.wrap .next { background:var(--green,#244d36); border-color:var(--green,#244d36); }
+.wrap .next h2 { font-family:inherit; font-weight:800; font-size:1.5rem; line-height:1.25; }
+.wrap .next p,.wrap .next .tag { color:#f0f5e9; }
+.wrap .number strong,.wrap .recipeCard strong,.wrap .recipeHero h2,.wrap .recipeMetrics strong,.wrap .recipeSection h3,.wrap .recapNumbers strong { font-family:inherit; font-weight:750; }
+.wrap .number span,.wrap .number small,.wrap .recipeCard span,.wrap .recipeCard small,.wrap .recipeHero span,.wrap .recipeHero p,.wrap .recipeMetrics span,.wrap .recipeSection > div > span,.wrap .recipeCallout,.wrap .recapNumbers span,.wrap .recapNumbers small,.wrap .historyRow small { font-size:.875rem; line-height:1.5; }
+.wrap .recipeGuide,.wrap .recipeHero,.wrap .recipeMetrics,.wrap .recipeMetrics div,.wrap .recipeSection,.wrap .ingredientList,.wrap .ingredientList div,.wrap .historyRow { border-color:var(--line,#d7ccbb); }
+.wrap .backButton { background:var(--paper,#fffcf6); border-color:var(--line,#d7ccbb); color:var(--ink,#151811); min-height:48px; font-size:1rem; }
+.wrap .recipeCard:hover,.wrap .recipeCard:focus-visible,.wrap .recipeCallout,.wrap .recipeHero b,.wrap .movementIn { background:var(--green,#244d36); color:white; }
+.wrap .recipeCard:focus-visible { outline:3px solid var(--green,#244d36); outline-offset:3px; }
+.wrap .recipeCard b,.wrap .ingredientList div,.wrap .workSteps { font-size:1rem; line-height:1.5; }
+.wrap .recapPeriods { background:var(--bg,#f3ebdd); border-color:var(--line,#d7ccbb); flex-wrap:wrap; }
+.wrap .recapPeriods button { min-height:48px; font-size:.875rem; }
+.wrap .recapPeriods button[aria-pressed="true"] { background:var(--green,#244d36); color:white; }
+.wrap .recapNumbers > div,.wrap .movementOut,.wrap .sync { background:var(--bg,#f3ebdd); border-color:var(--line,#d7ccbb); }
+.wrap .historyRow strong { font-size:1rem; }
+.wrap .recipeMetrics,.wrap .recipeCards,.wrap .recapNumbers { min-width:0; }
+.wrap .recipeMetrics strong,.wrap .ingredientList strong { overflow-wrap:anywhere; }
+.wrap .warning p { color:inherit; font-size:1rem; }

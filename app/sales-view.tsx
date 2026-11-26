@@ -12,12 +12,18 @@ type Sale = {
   payment_method: string;
   occurred_at: string;
   source: string;
+  external_id: string | null;
   recipes: { name: string } | null;
   locations: { code: string } | null;
 };
 type PosHealth = {
   status: string;
   last_successful_sync_at: string | null;
+};
+type ReceiptGroup = {
+  key: string;
+  reference: string | null;
+  rows: Sale[];
 };
 type Period = "day" | "week" | "month";
 type Rollup = {
@@ -93,32 +99,19 @@ function formatSaleTime(value: string, period: Period, timeZone: string) {
     : date.toLocaleString("id-ID", { timeZone, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-function fallbackRollups(rows: Sale[], period: Period, timeZone: string): Rollup[] {
-  const groups = new Map<string, Rollup>();
-  for (const sale of rows) {
-    const date = safeDate(sale.occurred_at);
-    if (!date) continue;
-    const parts = Object.fromEntries(
-      new Intl.DateTimeFormat("en-CA", {
-        timeZone,
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        ...(period === "day" ? { hour: "2-digit", hourCycle: "h23" } : {}),
-      }).formatToParts(date).map((part) => [part.type, part.value]),
-    );
-    const bucket = period === "day"
-      ? `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:00:00`
-      : `${parts.year}-${parts.month}-${parts.day}`;
-    const entry = groups.get(bucket) ?? { bucket, revenue: 0, cogs: 0, cups: 0, cash: 0, qris: 0 };
-    entry.revenue += Number(sale.total);
-    entry.cogs += Number(sale.cogs);
-    entry.cups += Number(sale.quantity);
-    if (sale.payment_method === "cash") entry.cash += Number(sale.total);
-    if (sale.payment_method === "qris_static" || sale.payment_method === "qris_provider") entry.qris += Number(sale.total);
-    groups.set(bucket, entry);
-  }
-  return [...groups.values()].sort((a, b) => a.bucket.localeCompare(b.bucket));
+function receiptIdentity(sale: Sale) {
+  // Only the current importer guarantees this format. Never infer a receipt
+  // from a product name or timestamp: different customers can share either.
+  const match = sale.external_id?.match(/^(.+):receipt:(.+):line:.+$/);
+  return match
+    ? { key: `${match[1]}:receipt:${match[2]}`, reference: match[2] }
+    : { key: sale.id, reference: null };
+}
+
+function paymentLabel(method: string) {
+  if (method === "cash") return "Tunai";
+  if (method === "qris_static" || method === "qris_provider") return "QRIS";
+  return "Lainnya / gabungan";
 }
 
 export function SalesView({
@@ -137,6 +130,13 @@ export function SalesView({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [syncError, setSyncError] = useState("");
+  const [pendingReceipts, setPendingReceipts] = useState<number | null>(null);
+  const [totalsUnavailable, setTotalsUnavailable] = useState(false);
+  const [historyLimited, setHistoryLimited] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [showInsights, setShowInsights] = useState(master);
   const [posStatus, setPosStatus] = useState("Memuat status");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
@@ -150,11 +150,19 @@ export function SalesView({
   const [displayTimeZone, setDisplayTimeZone] = useState("Asia/Jakarta");
   const lastUpdatedRef = useRef<Date | null>(null);
   const requestIdRef = useRef(0);
-  const load = useCallback(async (quiet = false) => {
+  const load = useCallback(async (quiet = false, refreshOnly = false): Promise<void> => {
     const requestId = ++requestIdRef.current;
     if (quiet) setRefreshing(true);
-    else setLoading(true);
+    else {
+      setLoading(true);
+      setRows([]);
+      setRollups([]);
+      setTotalsUnavailable(true);
+      setLastUpdatedAt(null);
+      lastUpdatedRef.current = null;
+    }
     setError("");
+    try {
     const db = createClient();
     let reportTimeZone = "Asia/Jakarta";
     if (locationId) {
@@ -171,39 +179,60 @@ export function SalesView({
     let query = db
       .from("sales")
       .select(
-        "id,quantity,total,cogs,payment_method,occurred_at,source,recipes(name),locations(code)",
+        "id,external_id,quantity,total,cogs,payment_method,occurred_at,source,recipes(name),locations(code)",
       )
       .gte("occurred_at", start.toISOString())
       .order("occurred_at", { ascending: false })
-      .limit(100);
+      .order("external_id", { ascending: false })
+      .limit(101);
     if (locationId) query = query.eq("location_id", locationId);
-    try {
-    if (autoSync && master && !locationId) {
-      const { data: activeConnections } = await db
+    const syncProblems: string[] = [];
+    let importedSales = false;
+    const syncLocation = async (activeLocationId: string) => {
+      try {
+        const response = await fetch("/api/loyverse/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ locationId: activeLocationId }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (!response.ok) syncProblems.push("Sinkronisasi Loyverse belum berhasil. Angka di bawah adalah data terakhir yang sudah tercatat.");
+        else {
+          const result = await response.json() as { processed?: number };
+          importedSales ||= Number(result.processed ?? 0) > 0;
+        }
+      } catch {
+        syncProblems.push("Loyverse belum dapat diperbarui. Periksa koneksi lalu coba lagi.");
+      }
+    };
+    // Read saved sales immediately. Provider latency must never keep the phone
+    // on a loading screen; a successful import triggers one read-only refresh.
+    const syncTask = (async () => {
+    if (autoSync && !refreshOnly && master && !locationId) {
+      const { data: activeConnections, error: connectionError } = await db
         .from("pos_connections")
         .select("location_id")
         .eq("provider", "loyverse")
         .eq("is_active", true);
       const locationIds = [...new Set((activeConnections ?? []).map((connection) => connection.location_id))];
-      await Promise.all(
-        locationIds.map((activeLocationId) =>
-          fetch("/api/loyverse/sync", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ locationId: activeLocationId }),
-          }),
-        ),
-      );
-    } else if (autoSync && locationId) {
+      if (connectionError) syncProblems.push("Daftar koneksi Loyverse belum dapat diperiksa.");
+      await Promise.all(locationIds.map(syncLocation));
+    } else if (autoSync && !refreshOnly && locationId) {
       // Pull only from the browser's own cart. The API validates the session
       // and performs the provider call on the server.
-      await fetch("/api/loyverse/sync", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ locationId }),
-      });
+      await syncLocation(locationId);
     }
-    const [salesResult, healthResult, rollupResult, productResult, cartPerformanceResult] = await Promise.all([
+    })().catch(() => { syncProblems.push("Loyverse belum dapat diperbarui. Periksa koneksi lalu coba lagi."); });
+    void syncTask.then(() => {
+      if (requestId !== requestIdRef.current) return;
+      if (!refreshOnly) setSyncError(syncProblems[0] ?? "");
+      if (importedSales) void load(true, true);
+    });
+    let pendingQuery = db.from("pos_receipt_events")
+      .select("id,pos_connections!inner(location_id)", { count: "exact", head: true })
+      .is("processed_at", null);
+    if (locationId) pendingQuery = pendingQuery.eq("pos_connections.location_id", locationId);
+    const [salesResult, healthResult, rollupResult, productResult, cartPerformanceResult, pendingResult] = await Promise.all([
       query,
       db.rpc("get_pos_health", { p_location_id: locationId }),
       db.rpc("get_sales_rollup", { p_location_id: locationId, p_period: period }),
@@ -213,8 +242,10 @@ export function SalesView({
       period === "day" || !master
         ? Promise.resolve({ data: [], error: null })
         : db.rpc("get_cart_sales_performance", { p_period: period }),
+      pendingQuery,
     ]);
     if (requestId !== requestIdRef.current) return;
+    setPendingReceipts(pendingResult.error ? null : (pendingResult.count ?? 0));
     if (salesResult.error) {
       setError(
         lastUpdatedRef.current
@@ -223,9 +254,11 @@ export function SalesView({
       );
     } else {
       const salesRows = (salesResult.data ?? []) as unknown as Sale[];
-      setRows(salesRows);
+      setHistoryLimited(salesRows.length > 100);
+      setRows(salesRows.slice(0, 100));
+      setTotalsUnavailable(Boolean(rollupResult.error));
       setRollups(rollupResult.error
-        ? fallbackRollups(salesRows, period, reportTimeZone)
+        ? []
         : ((rollupResult.data ?? []) as Rollup[]).map((row) => ({
           ...row,
           revenue: Number(row.revenue),
@@ -263,15 +296,19 @@ export function SalesView({
       setLastUpdatedAt(updatedAt);
       setError("");
     }
-    if (healthResult.error) setPosStatus("Status sinkronisasi tidak tersedia");
+    if (healthResult.error) {
+      setPosStatus("Status sinkronisasi tidak tersedia");
+      setLastSyncAt(null);
+    }
     else {
       const health = (healthResult.data ?? []) as PosHealth[];
+      // Across carts, the oldest successful sync is the useful freshness bound.
       const latest = health
         .map((row) => row.last_successful_sync_at)
         .filter((value): value is string => Boolean(value))
         .sort()
-        .at(-1);
-      setLastSyncAt(latest ?? null);
+        .at(0);
+      setLastSyncAt(health.some((row) => !row.last_successful_sync_at) ? null : (latest ?? null));
       setPosStatus(
         !health.length
           ? "Belum terhubung"
@@ -299,12 +336,16 @@ export function SalesView({
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") void load(true);
     }, period === "day" ? 15_000 : 60_000);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      // Ignore reads and provider callbacks from the previous cart / period.
+      requestIdRef.current += 1;
+    };
   }, [load, period]);
 
   const lastSyncDate = safeDate(lastSyncAt);
   const syncLabel = lastSyncDate
-    ? `Terakhir sinkronisasi ${lastSyncDate.toLocaleTimeString("id-ID", { timeZone: displayTimeZone, hour: "2-digit", minute: "2-digit" })}`
+    ? `Sinkronisasi ${master && !locationId ? "terlama " : ""}${lastSyncDate.toLocaleString("id-ID", { timeZone: displayTimeZone, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`
     : "Belum ada sinkronisasi berhasil";
   const refreshLabel = lastUpdatedAt
     ? `Diperbarui ${lastUpdatedAt.toLocaleTimeString("id-ID", { timeZone: displayTimeZone, hour: "2-digit", minute: "2-digit" })}`
@@ -323,6 +364,24 @@ export function SalesView({
       ),
     [rollups],
   );
+  const otherPayments = summary.revenue - summary.cash - summary.qris;
+  const receiptGroups = useMemo(() => {
+    const groups = new Map<string, ReceiptGroup>();
+    for (const row of rows) {
+      const identity = receiptIdentity(row);
+      const group = groups.get(identity.key) ?? { ...identity, rows: [] };
+      group.rows.push(row);
+      groups.set(identity.key, group);
+    }
+    return [...groups.values()];
+  }, [rows]);
+  const filteredReceipts = useMemo(() => {
+    const search = historySearch.trim().toLocaleLowerCase("id-ID");
+    return receiptGroups.filter((receipt) => !search || [receipt.reference ?? "", ...receipt.rows.map((row) => row.recipes?.name ?? "")].join(" ").toLocaleLowerCase("id-ID").includes(search));
+  }, [receiptGroups, historySearch]);
+  const staleSync = !lastSyncDate || Date.now() - lastSyncDate.getTime() > 5 * 60_000;
+  const needsAttention = Boolean(error || syncError || staleSync || posStatus !== "Terhubung" || pendingReceipts === null || pendingReceipts > 0);
+  const metricValue = (value: number, currency = true) => loading || totalsUnavailable ? "—" : currency ? money.format(value) : String(value);
   const chart = useMemo(
     () => rollups.map((row) => ({
       label: period === "day"
@@ -362,7 +421,7 @@ export function SalesView({
   const visibleCartPerformance = cartPerformance.length <= 6
     ? cartPerformance
     : [...cartPerformance.slice(0, 3), ...cartPerformance.slice(-3)];
-  const productPalette = ["#111", "#4c4c48", "#777771", "#a4a49d", "#c9c9c1"];
+  const productPalette = ["#52623e", "#dc6938", "#9caa7d", "#c8aa70", "#e1cdb0"];
   let productShareCursor = 0;
   const productDonut = topProducts.length
     ? `conic-gradient(${[
@@ -375,7 +434,24 @@ export function SalesView({
       ].join(", ")})`
     : "#ecece8";
   return (
-    <div className={styles.wrap}>
+    <div className={`${styles.wrap} ${!master ? styles.operatorWrap : ""}`}>
+      {!master ? <section className={styles.operatorGuide} aria-label="Cara mencatat penjualan">
+        <span className={styles.eyebrow}>KASIR GEROBAK</span>
+        <h2>Catat penjualan di Loyverse.</h2>
+        <p>Buat struk di aplikasi Loyverse. Periksa hasil impor dan pembayaranmu di sini.</p>
+        <button type="button" className={styles.primaryAction} aria-expanded={guideOpen} aria-controls="loyverse-sales-guide" onClick={() => setGuideOpen((open) => !open)}>
+          {guideOpen ? "Tutup panduan penjualan" : "Catat penjualan di Loyverse"}
+        </button>
+        {guideOpen ? <div id="loyverse-sales-guide" className={styles.guideSteps}>
+          <ol>
+            <li><strong>Buka aplikasi Loyverse.</strong> Pastikan gerai sesuai dengan gerobakmu.</li>
+            <li><strong>Pilih menu dan jumlah.</strong> Cek stok minuman dan total pesanan.</li>
+            <li><strong>Konfirmasi pembayaran.</strong> Untuk QRIS, periksa dana masuk sebelum menyelesaikan struk.</li>
+            <li><strong>Periksa hasil impor.</strong> Muat ulang di bawah. Jika belum masuk, hubungi Master; jangan buat ulang struk.</li>
+          </ol>
+          <p>Minuman gratis tetap dicatat melalui promo atau diskon yang disetujui di Loyverse agar pemakaian stok tercatat.</p>
+        </div> : null}
+      </section> : null}
       {error ? (
         <div className={styles.empty} role="alert">
           {error}{" "}
@@ -385,13 +461,18 @@ export function SalesView({
         </div>
       ) : null}
       <div className={styles.liveBar} aria-live="polite">
-        <span className={error ? styles.liveStale : styles.liveDot} />
-        <span>{error ? "Data terakhir" : "Penjualan langsung"}</span>
-        <small>{refreshLabel} · {syncLabel}</small>
+        <span className={needsAttention ? styles.liveStale : styles.liveDot} aria-hidden="true" />
+        <div className={styles.freshness}><strong>{loading ? "Memeriksa penjualan…" : needsAttention ? "Periksa pembaruan data" : "Data impor Loyverse"}</strong>
+          <small>{syncLabel} · {refreshLabel}</small>
+          <small>{pendingReceipts === null ? "Jumlah struk tertunda belum dapat diperiksa." : pendingReceipts > 0 ? `${pendingReceipts} struk / kejadian belum selesai diproses. Hubungi Master sebelum tutup hari.` : "Tidak ada struk tertunda yang tercatat."}</small>
+        </div>
         <button type="button" onClick={() => void load(true)} disabled={loading || refreshing}>
           {refreshing ? "Memuat…" : "Muat ulang"}
         </button>
       </div>
+      {syncError ? <div className={styles.warning} role="status">{syncError}</div> : null}
+      {!loading && staleSync ? <p className={styles.warning}>Sinkronisasi belum tersedia atau sudah lebih dari 5 menit. Angka dapat tertinggal dari Loyverse.</p> : null}
+      {!loading && totalsUnavailable ? <div className={styles.warning} role="alert"><strong>Total periode belum tersedia.</strong> Daftar item terbaru tetap dapat dilihat. Total tidak dihitung dari daftar yang terbatas agar tidak menampilkan angka sebagian sebagai total lengkap.</div> : null}
       <div className={styles.periods} aria-label="Periode laporan">
         {(["day", "week", "month"] as Period[]).map((value) => (
           <button
@@ -400,38 +481,41 @@ export function SalesView({
             aria-pressed={period === value}
             onClick={() => setPeriod(value)}
           >
-            {value === "day" ? "Harian" : value === "week" ? "Mingguan" : "Bulanan"}
+            {value === "day" ? "Hari ini" : value === "week" ? "7 hari" : "Bulan ini"}
           </button>
         ))}
       </div>
-      {period === "day" ? (
+      {master && period === "day" ? (
         <button className={styles.recapHint} type="button" onClick={() => setPeriod("week")}>
           <span>Recap produk & tren tersedia</span>
-          <strong>Lihat laporan mingguan →</strong>
+          <strong>Lihat laporan mingguan</strong>
         </button>
       ) : null}
       <section className={styles.metrics}>
         <article className={styles.metric}>
-          <span>OMZET · {periodLabel.toUpperCase()}</span>
-          <strong>{loading ? "—" : money.format(summary.revenue)}</strong>
+          <span>OMZET TERCATAT · {periodLabel.toUpperCase()}</span>
+          <strong>{metricValue(summary.revenue)}</strong>
         </article>
         <article className={styles.metric}>
-          <span>CUP · {periodLabel.toUpperCase()}</span>
-          <strong>{loading ? "—" : summary.cups}</strong>
+          <span>GELAS TERCATAT · {periodLabel.toUpperCase()}</span>
+          <strong>{metricValue(summary.cups, false)}</strong>
         </article>
-        <article className={styles.metric}>
+        {master ? <article className={styles.metric}>
           <span>COGS TERJUAL</span>
-          <strong>{loading ? "—" : money.format(summary.cogs)}</strong>
-        </article>
-        <article className={styles.metric}>
+          <strong>{metricValue(summary.cogs)}</strong>
+        </article> : null}
+        {master ? <article className={styles.metric}>
           <span>LABA KOTOR</span>
           <strong>
-            {loading ? "—" : money.format(summary.revenue - summary.cogs)}
+            {metricValue(summary.revenue - summary.cogs)}
           </strong>
-        </article>
+        </article> : null}
       </section>
+      {!master ? <p className={styles.sub}>Gelas tercatat termasuk item gratis yang sudah diimpor. Struk tertunda atau refund yang belum selesai dapat memengaruhi ringkasan.</p> : null}
       <section className={styles.grid}>
-        <article className={styles.panel}>
+        <article className={`${styles.panel} ${styles.chartPanel}`}>
+          {!master ? <button type="button" className={styles.insightsToggle} aria-expanded={showInsights} aria-controls="sales-insights" onClick={() => setShowInsights((open) => !open)}>{showInsights ? "Tutup grafik & biaya" : "Lihat grafik & biaya"}</button> : null}
+          <div id="sales-insights" hidden={!showInsights}>
           <div className={styles.chartHead}>
             <div>
               <h2>{period === "day" ? "Penjualan per jam" : "Penjualan per hari"}</h2>
@@ -447,7 +531,7 @@ export function SalesView({
           </div>
           {loading ? (
             <div className={styles.chartEmpty}>Memuat penjualan…</div>
-          ) : chart.length ? (
+          ) : totalsUnavailable ? <div className={styles.chartEmpty}>Grafik belum dapat dimuat. Total periode tidak tersedia.</div> : chart.length ? (
             <div className={styles.chartViewport}>
               <div className={styles.chart}>
                 {chart.map((entry) => (
@@ -472,20 +556,26 @@ export function SalesView({
               <span>Grafik akan muncul setelah transaksi pertama masuk.</span>
             </div>
           )}
+          {!master ? <div className={styles.costSummary}><span>Biaya pokok terjual <strong>{metricValue(summary.cogs)}</strong></span><span>Laba kotor <strong>{metricValue(summary.revenue - summary.cogs)}</strong></span><small>Laba kotor belum dikurangi biaya operasional.</small></div> : null}
+          </div>
         </article>
         <article className={styles.panel}>
           <h2>Metode pembayaran</h2>
           <div className={styles.sub}>
-            Tunai dan QRIS berdasarkan transaksi valid.
+            Nilai item yang sudah diimpor. Cocokkan QRIS dengan laporan penyedia.
           </div>
           <div className={styles.mix}>
             <div className={styles.mixRow}>
               <span>Tunai</span>
-              <strong>{money.format(summary.cash)}</strong>
+              <strong>{metricValue(summary.cash)}</strong>
             </div>
             <div className={styles.mixRow}>
               <span>QRIS</span>
-              <strong>{money.format(summary.qris)}</strong>
+              <strong>{metricValue(summary.qris)}</strong>
+            </div>
+            <div className={`${styles.mixRow} ${otherPayments !== 0 ? styles.paymentAttention : ""}`}>
+              <span>Lainnya / gabungan</span>
+              <strong>{metricValue(otherPayments)}</strong>
             </div>
             <div className={styles.mixRow}>
               <span>Loyverse</span>
@@ -496,6 +586,7 @@ export function SalesView({
               <strong>{syncLabel}</strong>
             </div>
           </div>
+          {!loading && !totalsUnavailable && otherPayments !== 0 ? <p className={styles.warning}>Ada pembayaran yang belum dipisahkan ke tunai atau QRIS. Periksa bersama Master sebelum tutup hari.</p> : null}
         </article>
       </section>
       {period !== "day" ? (
@@ -600,7 +691,7 @@ export function SalesView({
                     </div>
                     <div className={styles.cartRevenue}><strong>{money.format(cart.revenue)}</strong><small>{cart.active_days} hari aktif · {trend === null ? "baru" : `${trend >= 0 ? "+" : ""}${trend.toFixed(0)}%`}</small></div>
                     <span className={`${styles.performanceStatus} ${status === "Perlu perhatian" || status === "Data belum cukup" ? styles.performanceLow : ""}`}>{status}</span>
-                    <span className={styles.cartOpen}>Buka cart →</span>
+                    <span className={styles.cartOpen}>Buka gerobak</span>
                   </button>
                 );
               })}
@@ -614,12 +705,34 @@ export function SalesView({
       {master ? (
         <button className={styles.transactionToggle} type="button" aria-expanded={showTransactions} onClick={() => setShowTransactions((visible) => !visible)}>
           <span>Detail transaksi seluruh lokasi</span>
-          <strong>{showTransactions ? "Tutup detail ↑" : "Lihat transaksi →"}</strong>
+          <strong>{showTransactions ? "Tutup detail" : "Lihat transaksi"}</strong>
         </button>
       ) : null}
       {showTransactions ? <article className={styles.panel}>
-        <h2>{master ? "Transaksi seluruh lokasi" : "Transaksi terbaru"} · {periodLabel}</h2>
-        <div className={styles.tableWrap}>
+        <h2>{master ? "Riwayat seluruh lokasi" : "Struk & item terbaru"} · {periodLabel}</h2>
+        <p className={styles.historyNote}>{historyLimited ? "Menampilkan 100 baris produk terbaru; riwayat ini belum lengkap." : `Menampilkan ${rows.length} baris produk yang sudah tercatat.`} Item dikelompokkan hanya jika nomor struk Loyverse dikenali. Nilai kartu adalah jumlah item yang tampil; struk yang belum selesai diimpor bisa belum lengkap.</p>
+        <label className={styles.searchField}>Cari di daftar ini
+          <input type="search" value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Nomor struk atau nama minuman" />
+        </label>
+        <div className={`${styles.receiptCards} ${master ? styles.masterReceiptCards : ""}`}>
+          {loading ? <p className={styles.empty}>Memuat riwayat penjualan…</p> : filteredReceipts.length ? filteredReceipts.map((receipt) => {
+            const total = receipt.rows.reduce((sum, row) => sum + Number(row.total), 0);
+            const cups = receipt.rows.reduce((sum, row) => sum + Number(row.quantity), 0);
+            const methods = [...new Set(receipt.rows.map((row) => paymentLabel(row.payment_method)))];
+            return <details className={styles.receiptCard} key={receipt.key}>
+              <summary>
+                <span className={styles.receiptIdentity}><strong>{receipt.reference ? `Struk #${receipt.reference}` : "Baris produk"}</strong><small>{formatSaleTime(receipt.rows[0].occurred_at, period, displayTimeZone)}{master ? ` · ${receipt.rows[0].locations?.code ?? "Lokasi"}` : ""}</small></span>
+                <span className={styles.receiptAmount}><strong>{money.format(total)}</strong><small>{cups} gelas tercatat</small></span>
+              </summary>
+              <div className={styles.receiptBody}>
+                <p className={styles.paymentBadge}>{methods.join(" · ")}</p>
+                {receipt.rows.map((row) => <div className={styles.receiptLine} key={row.id}><span>{row.quantity} × {row.recipes?.name ?? "Produk"}{Number(row.total) === 0 ? <small>Nilai Rp0 · cek promo di Loyverse</small> : null}</span><strong>{money.format(Number(row.total))}</strong></div>)}
+                <p className={styles.historyNote}>Nilai item tercatat. {receipt.reference ? "Cocokkan dengan struk Loyverse untuk jumlah lengkap." : "Nomor struk belum dikenali; baris ini tidak dihitung sebagai satu struk."}</p>
+              </div>
+            </details>;
+          }) : <p className={styles.empty}>{rows.length ? "Tidak ada hasil dalam daftar ini." : error ? "Riwayat belum tersedia. Coba muat ulang." : "Belum ada item penjualan yang diimpor untuk periode ini."}</p>}
+        </div>
+        {master ? <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
@@ -633,7 +746,7 @@ export function SalesView({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {filteredReceipts.flatMap((receipt) => receipt.rows).map((row) => (
                 <tr key={row.id}>
                   <td>
                     {formatSaleTime(row.occurred_at, period, displayTimeZone)}
@@ -642,7 +755,7 @@ export function SalesView({
                   <td>{row.recipes?.name ?? "Produk"}</td>
                   <td>{row.quantity}</td>
                   <td>
-                    {row.payment_method.replaceAll("_", " ").toUpperCase()}
+                    {paymentLabel(row.payment_method)}
                   </td>
                   <td>{money.format(row.total)}</td>
                   <td>{money.format(row.cogs)}</td>
@@ -659,7 +772,7 @@ export function SalesView({
               ) : null}
             </tbody>
           </table>
-        </div>
+        </div> : null}
       </article> : null}
     </div>
   );
