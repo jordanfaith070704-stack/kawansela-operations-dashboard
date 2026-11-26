@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { OperatorActions } from "./operator-actions";
+import { OperatorCashDay } from "./operator-cash-day";
 import styles from "./operator-home.module.css";
 
 type View = "Produksi" | "Stok" | "Resep" | "Tutup Hari";
@@ -66,6 +67,16 @@ type ProductionRecap = {
 };
 
 type CloseStatus = { sales: number; counted: boolean; reconciled: boolean; closed: boolean; invalidated: boolean; invalidationReason: string | null; expectedCash: number; expectedQris: number; actualCash: number | null; actualQris: number | null; cashVariance: number | null; qrisVariance: number | null };
+type CashDaySummary = {
+  business_date: string;
+  timezone: string;
+  day_id: string | null;
+  opening_cash: number | null;
+  is_open: boolean;
+  is_closed: boolean;
+  income_total: number;
+  expense_total: number;
+};
 type OpnameLine = { system_quantity: number; physical_quantity: number; inventory_items: { name: string; unit: string } | null };
 const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 function jakartaParts() {
@@ -96,6 +107,8 @@ export function OperatorOperations({
   const [closeStatus, setCloseStatus] = useState<CloseStatus>({ sales: 0, counted: false, reconciled: false, closed: false, invalidated: false, invalidationReason: null, expectedCash: 0, expectedQris: 0, actualCash: null, actualQris: null, cashVariance: null, qrisVariance: null });
   const [lastOpname, setLastOpname] = useState<OpnameLine[]>([]);
   const [todayPayments, setTodayPayments] = useState({ cash: 0, qris: 0, other: 0, otherCount: 0 });
+  const [cashDay, setCashDay] = useState<CashDaySummary | null>(null);
+  const [cashDayUnavailable, setCashDayUnavailable] = useState(false);
   const [closeError, setCloseError] = useState(false);
   const [syncNeedsReview, setSyncNeedsReview] = useState(true);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
@@ -113,7 +126,7 @@ export function OperatorOperations({
         const dayStart = todayStartInJakarta();
         const businessDate = todayInJakarta();
         const dayEnd = new Date(dayStart.getTime() + 86_400_000);
-        const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult, batchAuditResult, productionRecapResult, healthResult] =
+        const [inventoryResult, recipeResult, batchResult, itemResult, salesResult, countResult, reconciliationResult, batchAuditResult, productionRecapResult, healthResult, cashDayResult] =
           await Promise.all([
             db
               .from("location_inventory")
@@ -152,6 +165,7 @@ export function OperatorOperations({
               p_period: productionPeriod,
             }),
             db.rpc("get_pos_health", { p_location_id: locationId }),
+            db.rpc("get_operator_cash_day", { p_location_id: locationId, p_business_date: null }),
           ]);
         if (!active) return;
         if (
@@ -181,7 +195,17 @@ export function OperatorOperations({
         } : null);
         setProductionRecapError(Boolean(productionRecapResult.error));
         setMasterItems((itemResult.data ?? []) as MasterItem[]);
-        setCloseError(Boolean(salesResult.error || countResult.error || reconciliationResult.error));
+        const unavailableCashSchema = cashDayResult.error?.code === "PGRST202" || cashDayResult.error?.code === "42883";
+        setCashDayUnavailable(unavailableCashSchema);
+        const cashSummary = cashDayResult.data as CashDaySummary | null;
+        const validCashSummary = Boolean(cashSummary && typeof cashSummary.business_date === "string" && typeof cashSummary.timezone === "string" && typeof cashSummary.is_open === "boolean" && (cashSummary.opening_cash === null || Number.isFinite(Number(cashSummary.opening_cash))) && Number.isFinite(Number(cashSummary.income_total)) && Number.isFinite(Number(cashSummary.expense_total)));
+        setCashDay(cashDayResult.error || !cashSummary || !validCashSummary ? null : {
+          ...cashSummary,
+          opening_cash: cashSummary.opening_cash === null ? null : Number(cashSummary.opening_cash),
+          income_total: Number(cashSummary.income_total),
+          expense_total: Number(cashSummary.expense_total),
+        });
+        setCloseError(Boolean(salesResult.error || countResult.error || reconciliationResult.error || (cashDayResult.error && !unavailableCashSchema) || (!cashDayResult.error && !validCashSummary)));
         const health = (healthResult.data ?? []) as Array<{ provider: string; status: string; last_successful_sync_at: string | null }>;
         const loyverseHealth = health.filter((item) => item.provider === "loyverse");
         setSyncNeedsReview(Boolean(healthResult.error) || !loyverseHealth.length || loyverseHealth.some((item) => { const syncedAt = new Date(item.last_successful_sync_at ?? "").getTime(); return item.status !== "healthy" || !Number.isFinite(syncedAt) || Date.now() - syncedAt > 5 * 60_000; }));
@@ -455,13 +479,7 @@ export function OperatorOperations({
     return (
       <div className={styles.wrap}>
         {taskNavigation}
-        <section className={styles.next}>
-          <div>
-            <h2>Stok gerobak</h2>
-            <p>Terima, siapkan, hitung stok.</p>
-          </div>
-        </section>
-        {!loading && expiredBatches.length > 0 ? <div className={styles.warning} role="status"><strong>{expiredBatches.length} batch kedaluwarsa — jangan digunakan.</strong><p>Pisahkan dari minuman yang layak. Catat melalui “Terbuang” saat dibuang.</p>{expiredBatches.map((batch) => <p key={batch.id}>{batch.recipe_versions?.recipes?.name ?? "Produk"} · {batch.remaining_ml} ml · batas {formatWib(batch.use_by)} WIB</p>)}</div> : null}
+        {!loading && expiredBatches.length > 0 ? <div className={styles.warning} role="status"><strong>{expiredBatches.length} batch kedaluwarsa. Jangan digunakan.</strong><details><summary>Lihat batch yang harus dipisahkan</summary>{expiredBatches.map((batch) => <p key={batch.id}>{batch.recipe_versions?.recipes?.name ?? "Produk"} · {batch.remaining_ml} ml · batas {formatWib(batch.use_by)} WIB</p>)}<p>Catat melalui “Terbuang” saat dibuang.</p></details></div> : null}
         <OperatorActions
           locationId={locationId}
           recipeVersions={recipeVersions}
@@ -499,47 +517,50 @@ export function OperatorOperations({
     return <div className={styles.wrap}>{taskNavigation}<article className={styles.panel}><div className={styles.panelHead}><div><h3>Resep kerja</h3><p>Pilih produk, ikuti takaran, lalu catat produksi.</p></div></div><div className={styles.recipeCards}>{recipes.map((item)=>{const active=item.recipe_versions.find((entry)=>entry.version===item.active_version);return <button type="button" className={styles.recipeCard} key={item.id} disabled={!active} onClick={()=>setSelectedRecipeId(item.id)}><span>{active ? `AKTIF · V${item.active_version}` : "BELUM TERSEDIA"}</span><strong>{item.name}</strong><small>{active?.batch_ml ?? 900} ml · {active?.serving_ml ?? 150} ml/cup</small><b>{active ? "Lihat resep" : "Minta resep ke admin"}</b></button>;})}</div>{loading?<div className={styles.empty}>Memuat resep…</div>:!recipes.length?<div className={styles.empty}>Belum ada resep aktif. Minta admin menerbitkan resep untuk gerobakmu.</div>:null}</article></div>;
   }
   const today = new Date().toLocaleDateString("id-ID", { dateStyle: "full", timeZone: "Asia/Jakarta" });
-  const closeBlockedReason = loading ? "Memuat pemeriksaan penutupan…"
-    : closeError ? "Data penjualan atau pemeriksaan belum dapat dimuat. Coba muat ulang sebelum menutup hari."
-    : closeStatus.invalidated ? closeStatus.invalidationReason ?? "Ada transaksi baru setelah penutupan. Minta admin meninjau ulang hari ini."
-    : syncNeedsReview ? "Sinkronisasi Loyverse perlu diperiksa. Pastikan semua struk sudah masuk, lalu muat ulang. Hubungi admin jika status belum pulih."
-    : todayPayments.otherCount ? "Ada metode pembayaran lain yang belum masuk perhitungan tunai atau QRIS. Minta admin memeriksa sebelum penutupan."
+  const savedCashDay = cashDay?.day_id && cashDay.opening_cash !== null ? {
+    businessDate: cashDay.business_date,
+    timezone: cashDay.timezone,
+    openingCash: cashDay.opening_cash,
+    incomeTotal: cashDay.income_total,
+    expenseTotal: cashDay.expense_total,
+  } : undefined;
+  const closeBlockedReason = loading ? "Memuat pemeriksaan…"
+    : closeError ? "Pemeriksaan belum dapat dimuat. Muat ulang sebelum menutup hari."
+    : closeStatus.invalidated ? `${closeStatus.invalidationReason ?? "Ada transaksi baru setelah penutupan."} Hubungi admin untuk meninjau ulang.`
+    : syncNeedsReview ? "Periksa sinkronisasi Loyverse. Pastikan semua struk sudah masuk, lalu muat ulang."
+    : todayPayments.otherCount ? `${todayPayments.otherCount} baris pembayaran lain (${rupiah.format(todayPayments.other)}) belum termasuk tunai atau QRIS. Minta admin memeriksa pemetaan pembayaran.`
     : closeStatus.closed ? "Penutupan hari ini sudah tercatat."
-    : !closeStatus.counted ? "Hitung stok fisik terlebih dahulu, lalu isi tunai dan QRIS."
+    : !cashDayUnavailable && !cashDay?.is_open ? "Mulai hari dan simpan modal awal terlebih dahulu."
+    : !closeStatus.counted ? "Hitung stok fisik, lalu cocokkan tunai dan QRIS."
     : "";
   const reviewRequired = loading || closeError || closeStatus.invalidated || syncNeedsReview || todayPayments.otherCount > 0;
+  const cashEstimate = savedCashDay ? savedCashDay.openingCash + todayPayments.cash + savedCashDay.incomeTotal - savedCashDay.expenseTotal : null;
   return (
     <div className={styles.wrap}>
-      <section className={styles.next}>
-        <div>
-          <div className={styles.tag}>TUTUP HARI · {today.toUpperCase()}</div>
-          <h2>{closeStatus.closed && !reviewRequired ? "Penutupan sudah tercatat." : "Hitung stok, lalu cocokkan uang."}</h2>
-          <p>Periksa struk Loyverse, hitung sisa stok, lalu isi tunai dan QRIS sesuai hasil pemeriksaan.</p>
-        </div>
-      </section>
-      {closeBlockedReason && !(closeStatus.closed && !reviewRequired) ? <div className={styles.warning} role="status"><strong>Perlu diselesaikan</strong><p>{closeBlockedReason}</p>{closeError || syncNeedsReview ? <button type="button" className={styles.taskButton} onClick={refresh}>Muat ulang pemeriksaan</button> : null}</div> : null}
-      <article className={styles.panel}>
-        <h3>Pemeriksaan hari ini</h3>
-        <div className={styles.row}><div><strong>1. Periksa penjualan</strong><small>{closeError ? "Data belum dapat dipastikan" : `${closeStatus.sales} baris penjualan tercatat`}. Pastikan tidak ada struk tertunda di Loyverse.</small><small>{lastSyncAt ? `Sinkron terakhir ${formatWib(lastSyncAt)} WIB` : "Belum ada sinkronisasi yang terkonfirmasi"}</small></div><span className={styles.state}>{loading ? "MEMUAT" : syncNeedsReview || closeError ? "PERIKSA" : "TERHUBUNG"}</span></div>
-        <div className={styles.row}><div><strong>2. Hitung stok fisik</strong><small>Hitung bahan dan kemasan yang diminta; pisahkan batch kedaluwarsa.</small></div><span className={styles.state}>{loading ? "MEMUAT" : closeStatus.counted ? "TERCATAT" : "BELUM"}</span></div>
-        <div className={styles.row}><div><strong>3. Cocokkan tunai & QRIS</strong><small>Gunakan uang yang dihitung dan total transaksi dari penyedia QRIS.</small></div><span className={styles.state}>{loading ? "MEMUAT" : closeStatus.invalidated ? "TINJAU ULANG" : closeStatus.reconciled ? "TERCATAT" : "BELUM"}</span></div>
-      </article>
-      {todayPayments.otherCount > 0 && !closeError ? <div className={styles.warning} role="alert"><strong>{todayPayments.otherCount} baris pembayaran lain · {rupiah.format(todayPayments.other)}</strong><p>Total ini tidak termasuk tunai atau QRIS. Hubungi admin untuk memastikan pemetaan metode bayar.</p></div> : null}
-      <article className={styles.panel}>
-        <div className={styles.panelHead}><div><h3>Tunai dan QRIS</h3><p>Saldo tunai dihitung saat formulir diisi. Cocokkan QRIS sebelum biaya atau potongan penyedia.</p></div></div>
-        <div className={styles.row}><div><strong>Tunai</strong><small>{closeError || loading ? "Belum dapat dipastikan" : closeStatus.reconciled && !closeStatus.invalidated ? `Seharusnya ${rupiah.format(closeStatus.expectedCash)}` : `Penjualan tercatat ${rupiah.format(todayPayments.cash)}`}</small><small>Aktual {closeStatus.actualCash === null ? "belum diisi" : rupiah.format(closeStatus.actualCash)}</small></div><div className={styles.quantity}><strong>{closeStatus.cashVariance === null || reviewRequired ? "—" : rupiah.format(closeStatus.cashVariance)}</strong><small>{closeStatus.invalidated ? "Perlu ditinjau ulang" : "Selisih tunai"}</small></div></div>
-        <div className={styles.row}><div><strong>QRIS</strong><small>{closeError || loading ? "Belum dapat dipastikan" : `Dari Loyverse ${rupiah.format(closeStatus.reconciled && !closeStatus.invalidated ? closeStatus.expectedQris : todayPayments.qris)}`}</small><small>Aktual {closeStatus.actualQris === null ? "belum diisi" : rupiah.format(closeStatus.actualQris)}</small></div><div className={styles.quantity}><strong>{closeStatus.qrisVariance === null || reviewRequired ? "—" : rupiah.format(closeStatus.qrisVariance)}</strong><small>Selisih QRIS</small></div></div>
-      </article>
-      {!loading && !closeError ? <OperatorActions
+      <OperatorCashDay key={`${locationId}-${closeStatus.closed ? "closed" : "open"}`} locationId={locationId} onCommitted={refresh} />
+      {closeStatus.closed && !reviewRequired ? <article className={styles.panel} role="status"><h3>Penutupan sudah tercatat.</h3><p>Lihat hasilnya di detail pemeriksaan.</p></article> : closeBlockedReason ? <div className={styles.warning} role="status"><strong>{loading ? "Memuat…" : "Langkah berikutnya"}</strong><p>{closeBlockedReason}</p>{!loading && (closeError || syncNeedsReview) ? <button type="button" className={styles.taskButton} onClick={refresh}>Muat ulang</button> : null}</div> : <p>Stok fisik sudah dihitung. Cocokkan uang sebelum menyimpan penutupan.</p>}
+      {cashDayUnavailable && !closeStatus.closed ? <p role="status">Kas harian belum aktif. Penutupan masih memakai formulir modal awal sebelumnya.</p> : null}
+      {!loading && !closeError && !closeStatus.closed ? <OperatorActions
         locationId={locationId}
         recipeVersions={recipeVersions}
         countItems={countItems}
         expectedCashSales={todayPayments.cash}
         expectedQrisSales={todayPayments.qris}
-        visibleKinds={closeStatus.closed ? [] : closeBlockedReason ? ["count"] : ["count", "close"]}
+        cashDay={savedCashDay}
+        visibleKinds={closeBlockedReason ? ["count"] : ["count", "close"]}
         onCommitted={refresh}
       /> : null}
-      {lastOpname.length ? <article className={styles.panel}><h3>Hasil hitung stok terakhir</h3><p>{lastOpname.length} item dihitung · {lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).length} item berselisih</p>{lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).map((line, index) => <div className={styles.row} key={`${line.inventory_items?.name}-${index}`}><div><strong>{line.inventory_items?.name ?? "Item"}</strong><small>Sistem {line.system_quantity} {line.inventory_items?.unit}</small></div><div className={styles.quantity}><strong>{Number(line.physical_quantity) - Number(line.system_quantity)} {line.inventory_items?.unit}</strong><small>Selisih hasil hitung</small></div></div>)}</article> : null}
+      <details className={styles.panel}>
+        <summary>Detail pemeriksaan</summary>
+        <p>{today}</p>
+        <div className={styles.row}><div><strong>Penjualan Loyverse</strong><small>{loading ? "Memuat…" : closeError ? "Belum dapat dipastikan" : `${closeStatus.sales} baris penjualan tercatat`}</small><small>{lastSyncAt ? `Sinkron terakhir ${formatWib(lastSyncAt)} WIB` : "Belum ada sinkronisasi terkonfirmasi"}</small></div><span className={styles.state}>{loading ? "MEMUAT" : syncNeedsReview || closeError ? "PERIKSA" : "TERHUBUNG"}</span></div>
+        <div className={styles.row}><div><strong>Hitung stok fisik</strong><small>{closeStatus.counted ? `${lastOpname.length} item tercatat hari ini` : "Belum tercatat hari ini"}</small></div><span className={styles.state}>{loading ? "MEMUAT" : closeStatus.counted ? "TERCATAT" : "BELUM"}</span></div>
+        <div className={styles.row}><div><strong>Penutupan</strong><small>Tunai dan QRIS diperiksa terpisah.</small></div><span className={styles.state}>{loading ? "MEMUAT" : closeStatus.invalidated ? "TINJAU ULANG" : closeStatus.reconciled ? "TERCATAT" : "BELUM"}</span></div>
+        {savedCashDay ? <><div className={styles.row}><strong>Modal awal</strong><span>{rupiah.format(savedCashDay.openingCash)}</span></div><div className={styles.row}><strong>Kas masuk lain</strong><span>{rupiah.format(savedCashDay.incomeTotal)}</span></div><div className={styles.row}><strong>Pengeluaran kas</strong><span>{rupiah.format(savedCashDay.expenseTotal)}</span></div></> : null}
+        <div className={styles.row}><div><strong>Tunai</strong><small>{closeError || loading ? "Belum dapat dipastikan" : closeStatus.reconciled && !closeStatus.invalidated ? `Seharusnya ${rupiah.format(closeStatus.expectedCash)}` : cashEstimate !== null ? `Perkiraan ${rupiah.format(cashEstimate)} sebelum refund penutupan` : `Penjualan tercatat ${rupiah.format(todayPayments.cash)}`}</small><small>Aktual {closeStatus.actualCash === null ? "belum diisi" : rupiah.format(closeStatus.actualCash)}</small></div><div className={styles.quantity}><strong>{closeStatus.cashVariance === null || reviewRequired ? "—" : rupiah.format(closeStatus.cashVariance)}</strong><small>{closeStatus.invalidated ? "Perlu ditinjau ulang" : "Selisih tunai"}</small></div></div>
+        <div className={styles.row}><div><strong>QRIS</strong><small>{closeError || loading ? "Belum dapat dipastikan" : `Dari Loyverse ${rupiah.format(closeStatus.reconciled && !closeStatus.invalidated ? closeStatus.expectedQris : todayPayments.qris)}`}</small><small>Aktual {closeStatus.actualQris === null ? "belum diisi" : rupiah.format(closeStatus.actualQris)}</small></div><div className={styles.quantity}><strong>{closeStatus.qrisVariance === null || reviewRequired ? "—" : rupiah.format(closeStatus.qrisVariance)}</strong><small>Selisih QRIS</small></div></div>
+        {lastOpname.length ? <><h3>Selisih stok terakhir</h3><p>{lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).length} item berselisih</p>{lastOpname.filter((line) => Number(line.physical_quantity) !== Number(line.system_quantity)).map((line, index) => <div className={styles.row} key={`${line.inventory_items?.name}-${index}`}><div><strong>{line.inventory_items?.name ?? "Item"}</strong><small>Sistem {line.system_quantity} {line.inventory_items?.unit}</small></div><div className={styles.quantity}><strong>{Number(line.physical_quantity) - Number(line.system_quantity)} {line.inventory_items?.unit}</strong><small>Selisih hasil hitung</small></div></div>)}</> : null}
+      </details>
     </div>
   );
 }

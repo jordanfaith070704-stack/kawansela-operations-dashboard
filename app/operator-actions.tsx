@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { entryUnits, toBaseQuantity, type EntryUnit } from "@/lib/operator-units";
 import styles from "./operator-actions.module.css";
 
 /** Transactional actions use the existing server-side RPCs. */
@@ -78,6 +79,14 @@ export type OperatorAction =
 
 export type OperatorActionResult = { ok: boolean; message?: string };
 
+export type OperatorCashDay = {
+  businessDate: string;
+  timezone: string;
+  openingCash: number;
+  incomeTotal: number;
+  expenseTotal: number;
+};
+
 type Props = {
   locationId: string;
   recipeVersions: RecipeVersionOption[];
@@ -87,6 +96,8 @@ type Props = {
   /** POS totals supplied by the parent; Loyverse remains the source of truth. */
   expectedCashSales?: number;
   expectedQrisSales?: number;
+  /** Saved opening cash and movements from get_operator_cash_day. */
+  cashDay?: OperatorCashDay;
   /**
    * Pass a server-side handler here for waste, opname and close-day. This
    * component never writes transactional tables from the browser directly.
@@ -151,6 +162,7 @@ export function OperatorActions({
   preparedBatches = [],
   expectedCashSales = 0,
   expectedQrisSales = 0,
+  cashDay,
   onAction,
   onCommitted,
   visibleKinds = ["receive", "production", "waste", "count", "close"],
@@ -164,19 +176,35 @@ export function OperatorActions({
   const [countedValues, setCountedValues] = useState<Record<string, string>>({});
   const [countSnapshot, setCountSnapshot] = useState<CountItem[]>([]);
   const [selectedReceiveId, setSelectedReceiveId] = useState("");
+  const [receiveEntryUnit, setReceiveEntryUnit] = useState<EntryUnit>("base");
+  const [receiveAmount, setReceiveAmount] = useState("");
+  const [receivePackSize, setReceivePackSize] = useState("");
+  const [wasteEntryUnit, setWasteEntryUnit] = useState<EntryUnit>("base");
+  const [wasteAmount, setWasteAmount] = useState("");
   const [selectedWasteId, setSelectedWasteId] = useState("");
   const [selectedWasteBatchId, setSelectedWasteBatchId] = useState("");
   const [businessDate, setBusinessDate] = useState(todayInJakarta);
   const [reconciliationValues, setReconciliationValues] = useState({ opening: 0, cash: 0, qris: 0, other: 0, refund: 0 });
   const [reconciliationEntered, setReconciliationEntered] = useState({ cash: false, qris: false });
   const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
-  const expectedCash = expectedCashSales + reconciliationValues.opening + reconciliationValues.other - reconciliationValues.refund;
+  const savedOpeningCash = cashDay?.openingCash ?? reconciliationValues.opening;
+  const savedIncome = cashDay?.incomeTotal ?? reconciliationValues.other;
+  const savedExpense = cashDay?.expenseTotal ?? 0;
+  const expectedCash = expectedCashSales + savedOpeningCash + savedIncome - savedExpense - reconciliationValues.refund;
   const cashVariance = reconciliationValues.cash - expectedCash;
   const qrisVariance = reconciliationValues.qris - expectedQrisSales;
 
   const selectedReceiveItem = receiveItems.find((item) => item.id === selectedReceiveId);
   const selectedWasteItem = countItems.find((item) => item.id === selectedWasteId);
   const selectedWasteBatch = preparedBatches.find((batch) => batch.id === selectedWasteBatchId);
+  const receiveUnits = entryUnits(selectedReceiveItem?.unit ?? "", { allowPack: true });
+  const receiveInput = receiveUnits.find((unit) => unit.value === receiveEntryUnit) ?? receiveUnits[0];
+  const wasteBaseUnit = wasteTarget === "batch" ? "ml" : selectedWasteItem?.unit ?? "";
+  const wasteUnits = entryUnits(wasteBaseUnit, { preparedDrink: wasteTarget === "batch" });
+  const wasteInput = wasteUnits.find((unit) => unit.value === wasteEntryUnit) ?? wasteUnits[0];
+  const receiveConversion = receiveAmount && selectedReceiveItem ? toBaseQuantity({ baseUnit: selectedReceiveItem.unit, inputUnit: receiveEntryUnit, quantity: receiveAmount, unitsPerPack: receivePackSize, allowPack: true }) : null;
+  const wasteConversion = wasteAmount && (selectedWasteItem || selectedWasteBatch) ? toBaseQuantity({ baseUnit: wasteBaseUnit, inputUnit: wasteEntryUnit, quantity: wasteAmount, preparedDrink: wasteTarget === "batch", maxBaseQuantity: wasteTarget === "batch" ? selectedWasteBatch?.remainingMl : selectedWasteItem?.systemQuantity }) : null;
+  const formatQuantity = (quantity: number) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 3 }).format(quantity);
   const completedCounts = countSnapshot.filter((item) => {
     const value = countedValues[item.id];
     return value !== undefined && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
@@ -188,11 +216,16 @@ export function OperatorActions({
     setCountedValues({});
     setCountSnapshot(countItems.map((item) => ({ ...item })));
     setSelectedReceiveId("");
+    setReceiveEntryUnit("base");
+    setReceiveAmount("");
+    setReceivePackSize("");
+    setWasteEntryUnit("base");
+    setWasteAmount("");
     setSelectedWasteId("");
     setSelectedWasteBatchId("");
     setWasteTarget("inventory");
-    setBusinessDate(todayInJakarta());
-    setReconciliationValues({ opening: 0, cash: 0, qris: 0, other: 0, refund: 0 });
+    setBusinessDate(cashDay?.businessDate ?? todayInJakarta());
+    setReconciliationValues({ opening: cashDay?.openingCash ?? 0, cash: 0, qris: 0, other: 0, refund: 0 });
     setReconciliationEntered({ cash: false, qris: false });
     setActive(kind);
   }
@@ -355,15 +388,16 @@ export function OperatorActions({
       setFeedback({ tone: "error", message: "Pilih item yang benar." });
       return;
     }
-    if (wholeUnit(item.unit) && !Number.isInteger(quantity)) {
-      setFeedback({ tone: "error", message: `Jumlah ${item.unit} harus berupa angka bulat.` });
+    const converted = toBaseQuantity({ baseUnit: item.unit, inputUnit: String(form.get("entryUnit") ?? "base"), quantity, unitsPerPack: String(form.get("unitsPerPack") ?? ""), allowPack: true });
+    if (!converted.ok) {
+      setFeedback({ tone: "error", message: converted.error });
       return;
     }
     void commit({
       kind: "receive",
       locationId,
       itemId,
-      quantity,
+      quantity: converted.quantity,
       reference: String(form.get("reference") || ""),
       note: String(form.get("note") || ""),
     });
@@ -413,15 +447,16 @@ export function OperatorActions({
         setFeedback({ tone: "error", message: "Pilih batch yang benar." });
         return;
       }
-      if (!Number.isInteger(quantity) || quantity > batch.remainingMl) {
-        setFeedback({ tone: "error", message: `Masukkan jumlah ml antara 1 dan ${batch.remainingMl}.` });
+      const converted = toBaseQuantity({ baseUnit: "ml", inputUnit: String(form.get("entryUnit") ?? "base"), quantity, preparedDrink: true, maxBaseQuantity: batch.remainingMl });
+      if (!converted.ok) {
+        setFeedback({ tone: "error", message: converted.error });
         return;
       }
       void commit({
         kind: "batch_waste",
         locationId,
         batchId: batch.id,
-        mlWasted: quantity,
+        mlWasted: converted.quantity,
         reason,
         note,
       });
@@ -432,15 +467,16 @@ export function OperatorActions({
       setFeedback({ tone: "error", message: "Pilih item yang benar." });
       return;
     }
-    if (quantity > item.systemQuantity || (wholeUnit(item.unit) && !Number.isInteger(quantity))) {
-      setFeedback({ tone: "error", message: `Jumlah terbuang tidak boleh melebihi ${item.systemQuantity} ${item.unit}${wholeUnit(item.unit) ? " dan harus berupa angka bulat" : ""}.` });
+    const converted = toBaseQuantity({ baseUnit: item.unit, inputUnit: String(form.get("entryUnit") ?? "base"), quantity, maxBaseQuantity: item.systemQuantity });
+    if (!converted.ok) {
+      setFeedback({ tone: "error", message: converted.error });
       return;
     }
     void commit({
       kind: "waste",
       locationId,
       itemId: item.id,
-      quantity,
+      quantity: converted.quantity,
       unit: item.unit,
       reason,
       note,
@@ -494,7 +530,8 @@ export function OperatorActions({
       "otherCashIn",
       "cashRefund",
     ].map(readMoney);
-    if (businessDate !== todayInJakarta() || String(form.get("businessDate")) !== businessDate) {
+    const activeDate = cashDay?.businessDate ?? todayInJakarta();
+    if (businessDate !== activeDate || String(form.get("businessDate")) !== businessDate) {
       setFeedback({ tone: "error", message: "Tanggal operasional sudah berganti. Tutup formulir dan muat ulang halaman sebelum tutup hari." });
       return;
     }
@@ -505,8 +542,12 @@ export function OperatorActions({
       });
       return;
     }
+    if (cashDay && (values[0] !== cashDay.openingCash || values[3] !== 0)) {
+      setFeedback({ tone: "error", message: "Modal awal dan pergerakan kas mengikuti catatan buka hari. Muat ulang untuk memeriksa angka terbaru." });
+      return;
+    }
     const note = String(form.get("note") ?? "").trim();
-    const cashDifference = values[1] - (expectedCashSales + values[0] + values[3] - values[4]);
+    const cashDifference = values[1] - (expectedCashSales + (cashDay?.openingCash ?? values[0]) + (cashDay?.incomeTotal ?? values[3]) - (cashDay?.expenseTotal ?? 0) - values[4]);
     const qrisDifference = values[2] - expectedQrisSales;
     if ((cashDifference !== 0 || qrisDifference !== 0) && !note) {
       setFeedback({ tone: "error", message: "Jelaskan selisih tunai atau QRIS sebelum menyimpan tutup hari." });
@@ -579,15 +620,28 @@ export function OperatorActions({
               {active === "receive" ? (
                 <>
                   <label>Item yang diterima
-                    <select name="itemId" required value={selectedReceiveId} onChange={(event) => setSelectedReceiveId(event.target.value)}>
+                    <select name="itemId" required value={selectedReceiveId} onChange={(event) => { setSelectedReceiveId(event.target.value); setReceiveEntryUnit("base"); setReceiveAmount(""); setReceivePackSize(""); }}>
                       <option value="" disabled>Pilih bahan atau kemasan</option>
                       {receiveItems.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.unit}</option>)}
                     </select>
                   </label>
-                  <label>Jumlah diterima {selectedReceiveItem ? `(${selectedReceiveItem.unit})` : ""}
-                    <input key={selectedReceiveId} name="quantity" type="number" min={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "1" : "0.001"} step={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "1" : "0.001"} inputMode={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "numeric" : "decimal"} aria-describedby="receive-unit-help" placeholder="Masukkan jumlah dari nota" required />
-                  </label>
-                  <p className={styles.help} id="receive-unit-help">{unitHelp(selectedReceiveItem?.unit ?? "")}</p>
+                  <div className={styles.quantityGrid}>
+                    <label>Jumlah diterima
+                      <input name="quantity" type="number" min={receiveInput.min} step={receiveInput.step} inputMode={receiveInput.step === "1" ? "numeric" : "decimal"} aria-describedby="receive-unit-help receive-conversion" placeholder="Isi jumlah" value={receiveAmount} onChange={(event) => setReceiveAmount(event.target.value)} disabled={!selectedReceiveItem} required />
+                    </label>
+                    <label>Satuan
+                      <select name="entryUnit" value={receiveEntryUnit} onChange={(event) => { setReceiveEntryUnit(event.target.value as EntryUnit); setReceiveAmount(""); setReceivePackSize(""); }} disabled={!selectedReceiveItem}>
+                        {receiveUnits.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  {receiveEntryUnit === "pack" ? <label>Isi setiap pak ({selectedReceiveItem?.unit})
+                    <input name="unitsPerPack" type="number" min="1" step="1" inputMode="numeric" value={receivePackSize} onChange={(event) => setReceivePackSize(event.target.value)} placeholder="Cek jumlah pada kemasan" required />
+                  </label> : null}
+                  <p className={styles.help} id="receive-unit-help">{receiveEntryUnit === "pack" ? "Isi jumlah satuan dalam satu pak sesuai kemasan. Sistem tidak menebak isi pak." : receiveEntryUnit === "liter" ? "Masukkan liter sesuai nota. 1 liter = 1.000 ml." : receiveEntryUnit === "kilogram" ? "Masukkan kg sesuai nota. 1 kg = 1.000 g." : unitHelp(selectedReceiveItem?.unit ?? "")}</p>
+                  <div className={`${styles.conversionPreview} ${receiveConversion && !receiveConversion.ok ? styles.conversionError : ""}`} id="receive-conversion" role="status">
+                    {receiveConversion ? receiveConversion.ok ? `Stok bertambah: ${formatQuantity(receiveConversion.quantity)} ${selectedReceiveItem?.unit}` : receiveConversion.error : "Pilih item, lalu masukkan jumlah dan satuannya."}
+                  </div>
                   <label>Nomor nota / surat jalan <span className={styles.optional}>(opsional)</span>
                     <input name="reference" maxLength={180} placeholder="Contoh: INV-1024" />
                   </label>
@@ -614,28 +668,38 @@ export function OperatorActions({
               {active === "waste" ? (
                 <>
                   <div className={styles.wasteChoice} role="group" aria-label="Jenis stok yang dibuang">
-                    <button className={wasteTarget === "inventory" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "inventory"} onClick={() => setWasteTarget("inventory")}>Bahan / kemasan</button>
-                    <button className={wasteTarget === "batch" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "batch"} onClick={() => setWasteTarget("batch")}>Minuman siap jual</button>
+                    <button className={wasteTarget === "inventory" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "inventory"} onClick={() => { setWasteTarget("inventory"); setWasteEntryUnit("base"); setWasteAmount(""); }}>Bahan / kemasan</button>
+                    <button className={wasteTarget === "batch" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "batch"} onClick={() => { setWasteTarget("batch"); setWasteEntryUnit("base"); setWasteAmount(""); }}>Minuman siap jual</button>
                   </div>
                   {wasteTarget === "inventory" ? (
                     <label>Item yang dibuang
-                      <select name="itemId" required value={selectedWasteId} onChange={(event) => setSelectedWasteId(event.target.value)}>
+                      <select name="itemId" required value={selectedWasteId} onChange={(event) => { setSelectedWasteId(event.target.value); setWasteEntryUnit("base"); setWasteAmount(""); }}>
                         <option value="" disabled>Pilih bahan atau kemasan</option>
                         {countItems.map((item) => <option key={item.id} value={item.id}>{item.name} · tersedia {item.systemQuantity} {item.unit}</option>)}
                       </select>
                     </label>
                   ) : (
                     <label>Batch yang dibuang
-                      <select name="batchId" required value={selectedWasteBatchId} onChange={(event) => setSelectedWasteBatchId(event.target.value)}>
+                      <select name="batchId" required value={selectedWasteBatchId} onChange={(event) => { setSelectedWasteBatchId(event.target.value); setWasteEntryUnit("base"); setWasteAmount(""); }}>
                         <option value="" disabled>Pilih batch minuman</option>
                         {preparedBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.name} · {batch.remainingMl} ml · #{batch.id.slice(0, 6)}</option>)}
                       </select>
                     </label>
                   )}
-                  <label>Jumlah dibuang {wasteTarget === "batch" ? "(ml)" : selectedWasteItem ? `(${selectedWasteItem.unit})` : ""}
-                    <input key={`${wasteTarget}:${selectedWasteId}:${selectedWasteBatchId}`} name="quantity" type="number" min={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "1" : "0.001"} step={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "1" : "0.001"} max={wasteTarget === "batch" ? selectedWasteBatch?.remainingMl : selectedWasteItem?.systemQuantity} inputMode={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "numeric" : "decimal"} placeholder="Masukkan jumlah yang dibuang" required />
-                  </label>
-                  <p className={styles.help}>Masukkan jumlah yang dibuang, bukan sisa stok. {wasteTarget === "batch" ? "Gunakan ml dan pilih batch yang benar." : unitHelp(selectedWasteItem?.unit ?? "")}</p>
+                  <div className={styles.quantityGrid}>
+                    <label>Jumlah dibuang
+                      <input name="quantity" type="number" min={wasteInput.min} step={wasteInput.step} inputMode={wasteInput.step === "1" ? "numeric" : "decimal"} placeholder="Isi jumlah" value={wasteAmount} onChange={(event) => setWasteAmount(event.target.value)} disabled={wasteTarget === "batch" ? !selectedWasteBatch : !selectedWasteItem} aria-describedby="waste-unit-help waste-conversion" required />
+                    </label>
+                    <label>Satuan
+                      <select name="entryUnit" value={wasteEntryUnit} onChange={(event) => { setWasteEntryUnit(event.target.value as EntryUnit); setWasteAmount(""); }} disabled={wasteTarget === "batch" ? !selectedWasteBatch : !selectedWasteItem}>
+                        {wasteUnits.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <p className={styles.help} id="waste-unit-help">Masukkan jumlah yang dibuang, bukan sisa stok. {wasteEntryUnit === "glass" ? "Gunakan gelas utuh atau setengah gelas (0,5). Untuk volume lain, pilih ml." : wasteTarget === "batch" ? "Gunakan ml bulat untuk volume sebagian gelas." : wasteEntryUnit === "liter" ? "1 liter = 1.000 ml." : wasteEntryUnit === "kilogram" ? "1 kg = 1.000 g." : unitHelp(selectedWasteItem?.unit ?? "")}</p>
+                  <div className={`${styles.conversionPreview} ${wasteConversion && !wasteConversion.ok ? styles.conversionError : ""}`} id="waste-conversion" role="status">
+                    {wasteConversion ? wasteConversion.ok ? `Stok berkurang: ${formatQuantity(wasteConversion.quantity)} ${wasteBaseUnit}` : wasteConversion.error : "Pilih stok, lalu masukkan jumlah dan satuannya."}
+                  </div>
                   <label>Alasan
                     <select name="reason" defaultValue="" required>
                       <option value="" disabled>Pilih alasan</option><option value="expired">Kedaluwarsa</option><option value="spill">Tumpah</option><option value="damaged">Rusak</option><option value="remake">Salah buat</option><option value="other">Lainnya</option>
@@ -671,17 +735,18 @@ export function OperatorActions({
               {active === "close" ? (
                 <>
                   <label>Tanggal operasional (WIB)<input name="businessDate" type="date" value={businessDate} readOnly aria-describedby="close-date-help" required /></label>
-                  <p className={styles.help} id="close-date-help">Formulir ini khusus hari ini agar sesuai dengan angka penjualan yang ditampilkan. Hubungi admin untuk meninjau hari sebelumnya.</p>
+                  <p className={styles.help} id="close-date-help">{cashDay ? "Tanggal dan modal mengikuti catatan buka hari. Uang masuk dan pengeluaran diambil dari catatan kas gerobak." : "Formulir ini khusus hari ini agar sesuai dengan angka penjualan yang ditampilkan. Hubungi admin untuk meninjau hari sebelumnya."}</p>
                   <div className={styles.moneyGrid}>
-                    <label>Modal tunai awal (Rp)<input name="openingCash" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, opening: Number(event.target.value) || 0 }))} required /></label>
+                    <label>Modal tunai awal (Rp)<input name="openingCash" type="number" min="0" step="1" inputMode="numeric" value={cashDay?.openingCash ?? reconciliationValues.opening} readOnly={Boolean(cashDay)} onChange={(event) => setReconciliationValues((value) => ({ ...value, opening: Number(event.target.value) || 0 }))} required /></label>
                     <label>Seluruh uang fisik (Rp)<input name="actualCash" type="number" min="0" step="1" inputMode="numeric" placeholder="Hasil hitung uang, termasuk modal" onChange={(event) => { setReconciliationValues((value) => ({ ...value, cash: Number(event.target.value) || 0 })); setReconciliationEntered((value) => ({ ...value, cash: event.target.value !== "" })); }} required /></label>
                     <label>QRIS menurut penyedia (Rp)<input name="actualQris" type="number" min="0" step="1" inputMode="numeric" placeholder="Dari laporan QRIS hari ini" onChange={(event) => { setReconciliationValues((value) => ({ ...value, qris: Number(event.target.value) || 0 })); setReconciliationEntered((value) => ({ ...value, qris: event.target.value !== "" })); }} required /></label>
-                    <label>Tunai masuk di luar penjualan (Rp)<input name="otherCashIn" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, other: Number(event.target.value) || 0 }))} required /></label>
+                    {cashDay ? <input name="otherCashIn" type="hidden" value="0" /> : <label>Tunai masuk di luar penjualan (Rp)<input name="otherCashIn" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, other: Number(event.target.value) || 0 }))} required /></label>}
                     <label>Refund tunai di luar POS (Rp)<input name="cashRefund" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, refund: Number(event.target.value) || 0 }))} aria-describedby="refund-help" required /></label>
                   </div>
-                  <p id="refund-help" className={styles.help}>Refund: isi 0 jika pengembalian dana sudah dicatat di Loyverse. Untuk QRIS, gunakan total sebelum biaya penyedia. Formulir ini belum mencatat pengeluaran usaha.</p>
+                  <p id="refund-help" className={styles.help}>Refund: isi 0 jika pengembalian dana sudah dicatat di Loyverse. Untuk QRIS, gunakan total sebelum biaya penyedia. {cashDay ? "Pengeluaran mengikuti catatan kas yang sudah disimpan." : "Formulir ini belum mencatat pengeluaran usaha."}</p>
                   <div className={styles.reconciliationPreview} aria-live="polite">
                     <strong>Periksa sebelum menyimpan</strong>
+                    {cashDay ? <><span>Modal awal tersimpan: {rupiah.format(cashDay.openingCash)}</span><span>Penjualan tunai bersih: +{rupiah.format(expectedCashSales)}</span><span>Kas masuk tercatat: +{rupiah.format(cashDay.incomeTotal)}</span><span>Pengeluaran tercatat: −{rupiah.format(cashDay.expenseTotal)}</span>{reconciliationValues.refund ? <span>Refund di luar POS: −{rupiah.format(reconciliationValues.refund)}</span> : null}</> : null}
                     <span>Tunai seharusnya: {rupiah.format(expectedCash)}</span>
                     <span>Tunai dihitung: {reconciliationEntered.cash ? rupiah.format(reconciliationValues.cash) : "Belum diisi"} · selisih {reconciliationEntered.cash ? rupiah.format(cashVariance) : "—"}</span>
                     <span>QRIS dari POS: {rupiah.format(expectedQrisSales)}</span>

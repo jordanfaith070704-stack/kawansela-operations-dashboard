@@ -1,11 +1,11 @@
 .wrap {
-  --sales-cream: #f3ebdd;
-  --sales-paper: #fffcf6;
-  --sales-ink: #151811;
-  --sales-olive: #52623e;
-  --sales-orange: #dc6938;
-  --sales-line: #d6cbb8;
-  --sales-muted: #625c50;
+  --sales-cream: var(--bg, #f3ebdd);
+  --sales-paper: var(--paper, #fffcf6);
+  --sales-ink: var(--ink, #151811);
+  --sales-olive: var(--green, #244d36);
+  --sales-orange: var(--brand, #ff6b22);
+  --sales-line: var(--line, #d7ccbb);
+  --sales-muted: var(--muted, #605a4f);
   display: grid;
   gap: 18px;
   color: var(--sales-ink);
@@ -20,14 +20,28 @@
 .wrap button:focus-visible, .wrap input:focus-visible, .wrap summary:focus-visible { outline: 3px solid var(--sales-olive); outline-offset: 3px; }
 .wrap p { margin: 0; }
 .wrap h2 { margin: 0; font-size: 21px; line-height: 1.3; letter-spacing: -.025em; }
-.operatorGuide { background: var(--sales-cream); border: 1px solid var(--sales-line); border-radius: 18px; padding: 22px; display: grid; gap: 12px; }
-.operatorGuide h2 { font-size: 27px; max-width: 28ch; }
+.operatorGuide { background: var(--sales-cream); border: 1px solid var(--sales-line); border-radius: 14px; padding: 0 16px; }
 .operatorGuide p { color: var(--sales-muted); font-size: 16px; }
-.eyebrow { color: var(--sales-olive); font-size: 13px; font-weight: 800; letter-spacing: .08em; }
-.primaryAction { border: 1px solid var(--sales-ink); border-radius: 12px; padding: 13px 16px; background: var(--sales-orange); color: var(--sales-ink); font-weight: 800 !important; text-align: center; box-shadow: 0 3px 0 var(--sales-ink); }
 .guideSteps { border-top: 1px solid var(--sales-line); padding-top: 10px; }
 .guideSteps ol { margin: 0 0 14px; padding-left: 24px; }
 .guideSteps li { padding: 8px 0 8px 5px; }
+.guideToggle { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; border: 0; background: transparent; color: var(--sales-olive); padding: 12px 0; font-weight: 750 !important; text-align: left; }
+.guideToggle span { font-size: 23px; line-height: 1; }
+.summaryCaption { color: var(--sales-muted); font-size: 13px; margin-top: -9px !important; }
+.moreHistory { border: 1px solid var(--sales-line); background: var(--sales-cream); color: var(--sales-olive); border-radius: 10px; width: 100%; padding: 11px 14px; margin-top: 14px; font-weight: 700 !important; }
+.exceptionInbox { background: var(--sales-paper); border: 1px solid var(--sales-line); border-radius: 16px; padding: 18px; min-width: 0; }
+.exceptionHeading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.issueCount { border-radius: 999px; min-width: 32px; padding: 4px 10px; background: #fff1d3; color: #815014; text-align: center; font-weight: 800; font-size: 14px; }
+.exceptionList { display: grid; gap: 12px; margin-top: 16px; }
+.exceptionItem { border: 1px solid #d9bd84; border-left: 4px solid #9c6615; background: #fff8e8; border-radius: 12px; padding: 14px; display: grid; gap: 9px; min-width: 0; }
+.issueReference { display: grid; gap: 4px; }
+.issueReference strong { font-size: 16px; overflow-wrap: anywhere; }
+.issueReference small { font-size: 12px; color: var(--sales-muted); }
+.issueLabel { font-weight: 750; font-size: 14px; color: #815014; }
+.exceptionItem p { font-size: 14px; color: var(--sales-muted); }
+.issueAction { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.issueAction strong { font-size: 14px; color: var(--sales-ink); }
+.issueAction button { border: 1px solid var(--sales-line); border-radius: 9px; background: var(--sales-paper); color: var(--sales-olive); padding: 10px 12px; font-weight: 700; }
 .liveBar { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--sales-line); border-radius: 14px; background: var(--sales-paper); padding: 15px; }
 .freshness { display: grid; flex: 1; min-width: 0; gap: 5px; }
 .freshness strong { font-size: 15px; }
@@ -148,8 +162,8 @@
 }
 @media (max-width: 600px) {
   .wrap { gap: 15px; }
-  .operatorGuide, .metric, .panel { padding: 16px; }
-  .operatorGuide h2 { font-size: 25px; }
+  .metric, .panel { padding: 16px; }
+  .operatorGuide { padding: 0 14px; }
   .liveBar { flex-wrap: wrap; }
   .liveBar button { width: 100%; margin-top: 5px; }
   .freshness { flex-basis: calc(100% - 24px); }

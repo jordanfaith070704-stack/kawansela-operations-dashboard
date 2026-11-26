@@ -305,6 +305,8 @@ export async function POST(request: NextRequest) {
     const cause = error instanceof Error ? error.message : "unknown_error";
     const detail = cause.includes("credential")
       ? "Kredensial Loyverse tidak dapat dibaca. Simpan ulang token koneksi."
+      : cause.includes("HTTP 402")
+        ? "Loyverse membatasi akses riwayat atau langganan API. Periksa paket dan rentang riwayat di Loyverse; transaksi lama tidak dilewati otomatis."
       : cause.includes("HTTP 401") || cause.includes("HTTP 403")
         ? "Token Loyverse ditolak. Simpan ulang token koneksi."
         : cause.includes("HTTP 429")
