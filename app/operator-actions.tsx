@@ -1,14 +1,10 @@
 "use client";
 
-import { FormEvent, ReactNode, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./operator-actions.module.css";
 
-/**
- * Keep every database contract in one place. Only createProduction exists in the
- * current schema. The other names intentionally remain explicit until their
- * server-side, transaction-safe RPCs are added.
- */
+/** Transactional actions use the existing server-side RPCs. */
 export const OPERATOR_RPC = {
   createProduction: "create_production_batch",
   createProductionBatches: "create_production_batches",
@@ -105,49 +101,46 @@ type Feedback = {
   message: string;
 } | null;
 
+type ActionKind = "receive" | "production" | "waste" | "count" | "close";
+
+const actionDetails: Record<ActionKind, { title: string; detail: string; summary: string }> = {
+  receive: { title: "Terima stok", detail: "Catat bahan atau kemasan yang baru diterima.", summary: "Bahan atau kemasan baru" },
+  production: { title: "Buat batch", detail: "Catat minuman yang dibuat dari resep aktif.", summary: "Produksi dari resep aktif" },
+  waste: { title: "Catat terbuang", detail: "Catat bahan, kemasan, atau minuman yang dibuang.", summary: "Tumpah, rusak, kedaluwarsa" },
+  count: { title: "Hitung fisik", detail: "Hitung bahan dan kemasan, lalu periksa selisihnya.", summary: "Cocokkan dengan stok fisik" },
+  close: { title: "Tutup hari", detail: "Cocokkan uang tunai dan laporan QRIS hari ini.", summary: "Cocokkan tunai dan QRIS" },
+};
+
 function todayInJakarta() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(
-    new Date(),
-  );
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function nowInJakartaInput() {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Jakarta",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(new Date()).map((part) => [part.type, part.value]),
-  );
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date()).map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 function jakartaInputToIso(value: string) {
-  return new Date(`${value}:00+07:00`).toISOString();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}:00+07:00`);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-function ActionCard({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  detail: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className={styles.card}>
-      <div>
-        <h3>{title}</h3>
-        <p>{detail}</p>
-      </div>
-      {children}
-    </section>
-  );
+function wholeUnit(unit: string) {
+  return ["pcs", "pc", "buah", "unit", "lembar", "cup", "lid", "botol"].includes(unit.toLowerCase().trim());
+}
+
+function unitHelp(unit: string) {
+  const normalized = unit.toLowerCase().trim();
+  if (normalized === "ml") return "Gunakan ml. Contoh: 1 liter = 1.000 ml.";
+  if (normalized === "g" || normalized === "gr") return "Gunakan gram. Contoh: 1 kg = 1.000 g.";
+  return unit ? `Gunakan satuan ${unit} sesuai item yang dipilih.` : "Pilih item untuk melihat satuan yang digunakan.";
 }
 
 export function OperatorActions({
@@ -162,23 +155,79 @@ export function OperatorActions({
   onCommitted,
   visibleKinds = ["receive", "production", "waste", "count", "close"],
 }: Props) {
-  const [active, setActive] = useState<
-    "receive" | "production" | "waste" | "count" | "close" | null
-  >(null);
+  const [active, setActive] = useState<ActionKind | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [wasteTarget, setWasteTarget] = useState<"inventory" | "batch">("inventory");
-  const [countedValues, setCountedValues] = useState<Record<string, number>>({});
+  const [countedValues, setCountedValues] = useState<Record<string, string>>({});
+  const [countSnapshot, setCountSnapshot] = useState<CountItem[]>([]);
+  const [selectedReceiveId, setSelectedReceiveId] = useState("");
+  const [selectedWasteId, setSelectedWasteId] = useState("");
+  const [selectedWasteBatchId, setSelectedWasteBatchId] = useState("");
+  const [businessDate, setBusinessDate] = useState(todayInJakarta);
   const [reconciliationValues, setReconciliationValues] = useState({ opening: 0, cash: 0, qris: 0, other: 0, refund: 0 });
+  const [reconciliationEntered, setReconciliationEntered] = useState({ cash: false, qris: false });
   const rupiah = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
   const expectedCash = expectedCashSales + reconciliationValues.opening + reconciliationValues.other - reconciliationValues.refund;
   const cashVariance = reconciliationValues.cash - expectedCash;
   const qrisVariance = reconciliationValues.qris - expectedQrisSales;
 
+  const selectedReceiveItem = receiveItems.find((item) => item.id === selectedReceiveId);
+  const selectedWasteItem = countItems.find((item) => item.id === selectedWasteId);
+  const selectedWasteBatch = preparedBatches.find((batch) => batch.id === selectedWasteBatchId);
+  const completedCounts = countSnapshot.filter((item) => {
+    const value = countedValues[item.id];
+    return value !== undefined && value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
+  }).length;
+
+  function openAction(kind: ActionKind) {
+    if (pendingRef.current) return;
+    setFeedback(null);
+    setCountedValues({});
+    setCountSnapshot(countItems.map((item) => ({ ...item })));
+    setSelectedReceiveId("");
+    setSelectedWasteId("");
+    setSelectedWasteBatchId("");
+    setWasteTarget("inventory");
+    setBusinessDate(todayInJakarta());
+    setReconciliationValues({ opening: 0, cash: 0, qris: 0, other: 0, refund: 0 });
+    setReconciliationEntered({ cash: false, qris: false });
+    setActive(kind);
+  }
+
+  function closeAction() {
+    if (!pendingRef.current) setActive(null);
+  }
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (active) {
+      if (!dialog.open) dialog.showModal();
+      const frame = window.requestAnimationFrame(() => {
+        dialog.querySelector<HTMLElement>("#operator-action-title")?.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    if (dialog.open) dialog.close();
+  }, [active]);
+
+  useEffect(() => {
+    if (active && feedback?.tone === "error") {
+      const alert = dialogRef.current?.querySelector<HTMLElement>('[role="alert"]');
+      alert?.focus();
+    }
+  }, [active, feedback]);
+
   async function commit(action: OperatorAction) {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
     setPending(true);
     setFeedback(null);
     try {
+      let serverMessage: string | undefined;
       if (onAction) {
         const result = await onAction(action);
         if (!result.ok)
@@ -250,23 +299,25 @@ export function OperatorActions({
         if (error) throw error;
         const result = data as { expected_cash?: number; expected_qris?: number; cash_variance?: number; qris_variance?: number } | null;
         if (result) {
-          setFeedback({ tone: "success", message: `Rekonsiliasi tersimpan · Cash ${rupiah.format(Number(result.cash_variance ?? 0))} · QRIS ${rupiah.format(Number(result.qris_variance ?? 0))}.` });
-          setActive(null);
-          await onCommitted?.();
-          return;
+          serverMessage = `Tutup hari tersimpan. Selisih tunai ${rupiah.format(Number(result.cash_variance ?? 0))}; QRIS ${rupiah.format(Number(result.qris_variance ?? 0))}.`;
         }
       }
       const messages = {
         receive: "Penerimaan stok berhasil dicatat.",
         production: "Produksi berhasil dicatat.",
-        waste: "Waste berhasil dicatat.",
-        batch_waste: "Waste batch berhasil dicatat.",
+        waste: "Stok terbuang berhasil dicatat.",
+        batch_waste: "Minuman terbuang berhasil dicatat.",
         stock_opname: "Stok opname berhasil disimpan.",
         close_day: "Rekonsiliasi harian berhasil disimpan.",
       };
-      setFeedback({ tone: "success", message: messages[action.kind] });
+      const successMessage = serverMessage ?? messages[action.kind];
+      setFeedback({ tone: "success", message: successMessage });
       setActive(null);
-      await onCommitted?.();
+      try {
+        await onCommitted?.();
+      } catch {
+        setFeedback({ tone: "neutral", message: `${successMessage} Ringkasan belum diperbarui. Muat ulang halaman untuk melihat stok terbaru.` });
+      }
     } catch (error) {
       const message =
         error instanceof Error
@@ -278,10 +329,11 @@ export function OperatorActions({
         tone: "error",
         message:
           message.includes("permission") || message.includes("function")
-            ? "Aksi belum diaktifkan di server. Tidak ada data yang diubah."
+            ? "Aksi belum tersedia untuk akunmu. Hubungi admin Kawansela."
             : message,
       });
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   }
@@ -298,8 +350,13 @@ export function OperatorActions({
       return;
     }
     const itemId = String(form.get("itemId") || "");
-    if (!receiveItems.some((item) => item.id === itemId)) {
+    const item = receiveItems.find((entry) => entry.id === itemId);
+    if (!item) {
       setFeedback({ tone: "error", message: "Pilih item yang benar." });
+      return;
+    }
+    if (wholeUnit(item.unit) && !Number.isInteger(quantity)) {
+      setFeedback({ tone: "error", message: `Jumlah ${item.unit} harus berupa angka bulat.` });
       return;
     }
     void commit({
@@ -320,13 +377,17 @@ export function OperatorActions({
       setFeedback({ tone: "error", message: "Jumlah batch harus berupa angka antara 1 dan 50." });
       return;
     }
-    void commit({
-      kind: "production",
-      locationId,
-      recipeVersionId: String(form.get("recipeVersionId")),
-      producedAt: jakartaInputToIso(String(form.get("producedAt"))),
-      batchCount,
-    });
+    const recipeVersionId = String(form.get("recipeVersionId") ?? "");
+    const producedAt = jakartaInputToIso(String(form.get("producedAt") ?? ""));
+    if (!recipeVersions.some((recipe) => recipe.id === recipeVersionId)) {
+      setFeedback({ tone: "error", message: "Pilih resep aktif sebelum menyimpan produksi." });
+      return;
+    }
+    if (!producedAt || new Date(producedAt).getTime() > Date.now() + 60_000) {
+      setFeedback({ tone: "error", message: "Periksa waktu produksi. Waktu harus valid dan sudah terjadi (WIB)." });
+      return;
+    }
+    void commit({ kind: "production", locationId, recipeVersionId, producedAt, batchCount });
   }
   function wasteSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -334,6 +395,10 @@ export function OperatorActions({
     const quantity = Number(form.get("quantity"));
     const reason = String(form.get("reason"));
     const note = String(form.get("note") || "").trim();
+    if (!["expired", "spill", "damaged", "remake", "other"].includes(reason)) {
+      setFeedback({ tone: "error", message: "Pilih alasan stok dibuang." });
+      return;
+    }
     if (!Number.isFinite(quantity) || quantity <= 0) {
       setFeedback({ tone: "error", message: "Jumlah waste harus lebih dari nol." });
       return;
@@ -367,6 +432,10 @@ export function OperatorActions({
       setFeedback({ tone: "error", message: "Pilih item yang benar." });
       return;
     }
+    if (quantity > item.systemQuantity || (wholeUnit(item.unit) && !Number.isInteger(quantity))) {
+      setFeedback({ tone: "error", message: `Jumlah terbuang tidak boleh melebihi ${item.systemQuantity} ${item.unit}${wholeUnit(item.unit) ? " dan harus berupa angka bulat" : ""}.` });
+      return;
+    }
     void commit({
       kind: "waste",
       locationId,
@@ -380,7 +449,11 @@ export function OperatorActions({
   function countSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const counts = countItems.map((item) => ({
+    if (!countSnapshot.length || countSnapshot.some((item) => !String(form.get(`count:${item.id}`) ?? "").trim())) {
+      setFeedback({ tone: "error", message: "Hitung dan isi setiap item. Masukkan 0 hanya jika item sudah dihitung dan habis." });
+      return;
+    }
+    const counts = countSnapshot.map((item) => ({
       itemId: item.id,
       physicalQuantity: Number(form.get(`count:${item.id}`)),
     }));
@@ -388,7 +461,8 @@ export function OperatorActions({
       counts.some(
         (count) =>
           !Number.isFinite(count.physicalQuantity) ||
-          count.physicalQuantity < 0,
+          count.physicalQuantity < 0 ||
+          (wholeUnit(countSnapshot.find((item) => item.id === count.itemId)?.unit ?? "") && !Number.isInteger(count.physicalQuantity)),
       )
     ) {
       setFeedback({
@@ -408,7 +482,11 @@ export function OperatorActions({
   function closeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const readMoney = (key: string) => Number(form.get(key) || 0);
+    if (["openingCash", "actualCash", "actualQris", "otherCashIn", "cashRefund"].some((key) => !String(form.get(key) ?? "").trim())) {
+      setFeedback({ tone: "error", message: "Isi semua kolom uang. Gunakan 0 hanya jika sudah diperiksa dan nilainya nol." });
+      return;
+    }
+    const readMoney = (key: string) => Number(form.get(key));
     const values = [
       "openingCash",
       "actualCash",
@@ -416,11 +494,22 @@ export function OperatorActions({
       "otherCashIn",
       "cashRefund",
     ].map(readMoney);
-    if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+    if (businessDate !== todayInJakarta() || String(form.get("businessDate")) !== businessDate) {
+      setFeedback({ tone: "error", message: "Tanggal operasional sudah berganti. Tutup formulir dan muat ulang halaman sebelum tutup hari." });
+      return;
+    }
+    if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
       setFeedback({
         tone: "error",
         message: "Isi semua nilai uang dengan angka nol atau lebih.",
       });
+      return;
+    }
+    const note = String(form.get("note") ?? "").trim();
+    const cashDifference = values[1] - (expectedCashSales + values[0] + values[3] - values[4]);
+    const qrisDifference = values[2] - expectedQrisSales;
+    if ((cashDifference !== 0 || qrisDifference !== 0) && !note) {
+      setFeedback({ tone: "error", message: "Jelaskan selisih tunai atau QRIS sebelum menyimpan tutup hari." });
       return;
     }
     void commit({
@@ -432,448 +521,185 @@ export function OperatorActions({
       actualQris: values[2],
       otherCashIn: values[3],
       cashRefund: values[4],
-      note: String(form.get("note") || ""),
+      note,
     });
   }
 
+  const submitLabels: Record<ActionKind, string> = {
+    receive: "Simpan stok masuk", production: "Simpan produksi", waste: "Simpan stok terbuang",
+    count: "Simpan hasil hitung", close: "Simpan tutup hari",
+  };
+  const cannotSubmit = pending ||
+    (active === "receive" && receiveItems.length === 0) ||
+    (active === "production" && recipeVersions.length === 0) ||
+    (active === "waste" && (wasteTarget === "inventory" ? countItems.length === 0 : preparedBatches.length === 0)) ||
+    (active === "count" && (!countSnapshot.length || completedCounts !== countSnapshot.length));
+
   return (
     <section className={styles.wrap} aria-label="Aksi operasional">
-      <div className={styles.heading}>
-        <div>
-          <div className={styles.eyebrow}>AKSI OPERASIONAL</div>
-          <h2>Catat aktivitas operasional.</h2>
-          <p>
-            Penjualan tetap dicatat di Loyverse. Di sini, konfirmasi produksi,
-            waste, stok, dan penutupan hari.
-          </p>
-        </div>
-      </div>
-      {feedback && (
-        <div
-          className={`${styles.feedback} ${feedback.tone === "success" ? styles.success : feedback.tone === "error" ? styles.error : ""}`}
-          role="status"
-        >
+      {feedback && !active ? (
+        <div className={`${styles.feedback} ${feedback.tone === "success" ? styles.success : feedback.tone === "error" ? styles.error : ""}`} role="status">
           {feedback.message}
         </div>
-      )}
-      <div className={styles.grid}>
-        {visibleKinds.includes("receive") ? (
-          <ActionCard
-            title="Terima stok"
-            detail="Catat bahan baku atau kemasan yang diterima."
-          >
-            <button
-              className={styles.primary}
-              type="button"
-              onClick={() => setActive("receive")}
-            >
-              + Terima stok
-            </button>
-          </ActionCard>
-        ) : null}
-        {visibleKinds.includes("production") ? (
-          <ActionCard
-            title="Produksi"
-            detail="Buat satu atau beberapa batch standar dari resep aktif."
-          >
-            <button
-              className={styles.primary}
-              type="button"
-              onClick={() => setActive("production")}
-            >
-              + Catat produksi
-            </button>
-          </ActionCard>
-        ) : null}
-        {visibleKinds.includes("waste") ? (
-          <ActionCard
-            title="Waste"
-            detail="Catat bahan, kemasan, atau batch siap jual yang tidak dapat digunakan."
-          >
-            <button
-              className={styles.secondary}
-              type="button"
-              onClick={() => setActive("waste")}
-            >
-              Catat waste
-            </button>
-          </ActionCard>
-        ) : null}
-        {visibleKinds.includes("count") ? (
-          <ActionCard
-            title="Stock opname"
-            detail="Masukkan stok fisik. Sistem menghitung selisih."
-          >
-            <button
-              className={styles.secondary}
-              type="button"
-              onClick={() => setActive("count")}
-            >
-              Mulai opname
-            </button>
-          </ActionCard>
-        ) : null}
-        {visibleKinds.includes("close") ? (
-          <ActionCard
-            title="Tutup hari"
-            detail="Konfirmasi kas dan QRIS setelah penjualan diperiksa."
-          >
-            <button
-              className={styles.secondary}
-              type="button"
-              onClick={() => setActive("close")}
-            >
-              Mulai tutup hari
-            </button>
-          </ActionCard>
-        ) : null}
+      ) : null}
+      <div className={`${styles.grid} ${visibleKinds.length === 1 ? styles.singleAction : ""}`}>
+        {visibleKinds.map((kind) => (
+          <button className={styles.card} data-kind={kind} type="button" key={kind} onClick={() => openAction(kind)}>
+            <strong>{actionDetails[kind].title}</strong>
+            <span>{actionDetails[kind].summary}</span>
+          </button>
+        ))}
       </div>
-
-      {active === "receive" && (
-        <form className={styles.form} onSubmit={receiveSubmit}>
-          <div className={styles.formHeader}>
-            <h3>Terima stok</h3>
-            <button
-              className={styles.close}
-              type="button"
-              onClick={() => setActive(null)}
-              aria-label="Tutup"
-            >
-              ×
-            </button>
-          </div>
-          <label>
-            Item
-            <select name="itemId" required defaultValue="">
-              <option value="" disabled>
-                Pilih item
-              </option>
-              {receiveItems.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name} · {item.unit}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Jumlah
-            <input
-              name="quantity"
-              type="number"
-              min="0.001"
-              step="0.001"
-              required
-            />
-          </label>
-          <label>
-            Nomor referensi
-            <input name="reference" placeholder="Nota / surat jalan" />
-          </label>
-          <label>
-            Catatan
-            <textarea name="note" rows={2} />
-          </label>
-          <button
-            className={styles.primary}
-            disabled={pending || receiveItems.length === 0}
+      <dialog
+        ref={dialogRef}
+        className={styles.dialog}
+        aria-labelledby="operator-action-title"
+        aria-describedby="operator-action-description"
+        onCancel={(event) => { event.preventDefault(); closeAction(); }}
+      >
+        {active ? (
+          <form
+            key={active}
+            className={styles.form}
+            aria-busy={pending}
+            onSubmit={active === "receive" ? receiveSubmit : active === "production" ? productionSubmit : active === "waste" ? wasteSubmit : active === "count" ? countSubmit : closeSubmit}
           >
-            {pending ? "Menyimpan…" : "Simpan penerimaan"}
-          </button>
-        </form>
-      )}
+            <div className={styles.formHeader}>
+              <div>
+                <span className={styles.eyebrow}>OPERASIONAL GEROBAK</span>
+                <h3 id="operator-action-title" tabIndex={-1}>{actionDetails[active].title}</h3>
+              </div>
+              <button className={styles.close} type="button" disabled={pending} onClick={closeAction} aria-label="Batalkan dan tutup formulir">×</button>
+            </div>
+            <p id="operator-action-description" className={styles.help}>{actionDetails[active].detail}</p>
+            {feedback ? (
+              <div className={`${styles.feedback} ${feedback.tone === "error" ? styles.error : styles.success}`} role={feedback.tone === "error" ? "alert" : "status"} tabIndex={-1}>{feedback.message}</div>
+            ) : null}
+            <fieldset className={styles.fields} disabled={pending}>
+              {active === "receive" ? (
+                <>
+                  <label>Item yang diterima
+                    <select name="itemId" required value={selectedReceiveId} onChange={(event) => setSelectedReceiveId(event.target.value)}>
+                      <option value="" disabled>Pilih bahan atau kemasan</option>
+                      {receiveItems.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.unit}</option>)}
+                    </select>
+                  </label>
+                  <label>Jumlah diterima {selectedReceiveItem ? `(${selectedReceiveItem.unit})` : ""}
+                    <input key={selectedReceiveId} name="quantity" type="number" min={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "1" : "0.001"} step={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "1" : "0.001"} inputMode={selectedReceiveItem && wholeUnit(selectedReceiveItem.unit) ? "numeric" : "decimal"} aria-describedby="receive-unit-help" placeholder="Masukkan jumlah dari nota" required />
+                  </label>
+                  <p className={styles.help} id="receive-unit-help">{unitHelp(selectedReceiveItem?.unit ?? "")}</p>
+                  <label>Nomor nota / surat jalan <span className={styles.optional}>(opsional)</span>
+                    <input name="reference" maxLength={180} placeholder="Contoh: INV-1024" />
+                  </label>
+                  <label>Catatan <span className={styles.optional}>(opsional)</span><textarea name="note" rows={2} maxLength={1000} /></label>
+                  {!receiveItems.length ? <p className={styles.help}>Belum ada item yang dapat diterima. Hubungi admin Kawansela.</p> : null}
+                </>
+              ) : null}
 
-      {active === "production" && (
-        <form className={styles.form} onSubmit={productionSubmit}>
-          <div className={styles.formHeader}>
-            <h3>Catat produksi</h3>
-            <button
-              className={styles.close}
-              type="button"
-              onClick={() => setActive(null)}
-              aria-label="Tutup"
-            >
-              ×
-            </button>
-          </div>
-          <label>
-            Resep aktif
-            <select name="recipeVersionId" required defaultValue="">
-              {" "}
-              <option value="" disabled>
-                Pilih resep
-              </option>
-              {recipeVersions.map((recipe) => (
-                <option key={recipe.id} value={recipe.id}>
-                  {recipe.name} · V{recipe.version}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Waktu produksi
-            <input
-              name="producedAt"
-              type="datetime-local"
-              defaultValue={nowInJakartaInput()}
-              required
-            />
-          </label>
-          <label>
-            Jumlah batch
-            <input name="batchCount" type="number" min="1" max="50" step="1" defaultValue="1" required />
-          </label>
-          <p className={styles.help}>
-            Satu batch mengikuti ukuran resep aktif (misalnya 900 ml). Sistem
-            mengurangi bahan sesuai total batch dan membuat batch FIFO terpisah.
-          </p>
-          <button
-            className={styles.primary}
-            disabled={pending || recipeVersions.length === 0}
-          >
-            {pending ? "Menyimpan…" : "Simpan produksi"}
-          </button>
-        </form>
-      )}
+              {active === "production" ? (
+                <>
+                  <label>Resep yang dibuat
+                    <select name="recipeVersionId" required defaultValue="">
+                      <option value="" disabled>Pilih resep aktif</option>
+                      {recipeVersions.map((recipe) => <option key={recipe.id} value={recipe.id}>{recipe.name} · V{recipe.version}</option>)}
+                    </select>
+                  </label>
+                  <label>Waktu produksi (WIB)<input name="producedAt" type="datetime-local" defaultValue={nowInJakartaInput()} max={nowInJakartaInput()} required /></label>
+                  <label>Jumlah batch<input name="batchCount" type="number" min="1" max="50" step="1" inputMode="numeric" defaultValue="1" aria-describedby="production-help" required /></label>
+                  <p className={styles.help} id="production-help">1–50 batch per pencatatan. Ukuran batch mengikuti resep aktif. Sistem mengurangi bahan sesuai resep dan membuat batch terpisah.</p>
+                  {!recipeVersions.length ? <p className={styles.help}>Belum ada resep aktif. Hubungi admin Kawansela sebelum produksi.</p> : null}
+                </>
+              ) : null}
 
-      {active === "waste" && (
-        <form className={styles.form} onSubmit={wasteSubmit}>
-          <div className={styles.formHeader}>
-            <h3>Catat waste</h3>
-            <button
-              className={styles.close}
-              type="button"
-              onClick={() => setActive(null)}
-              aria-label="Tutup"
-            >
-              ×
-            </button>
-          </div>
-          <div className={styles.wasteChoice} role="group" aria-label="Jenis waste">
-            <button
-              className={wasteTarget === "inventory" ? styles.choiceActive : styles.choice}
-              type="button"
-              onClick={() => setWasteTarget("inventory")}
-            >
-              Bahan / kemasan
-            </button>
-            <button
-              className={wasteTarget === "batch" ? styles.choiceActive : styles.choice}
-              type="button"
-              onClick={() => setWasteTarget("batch")}
-            >
-              Batch siap jual
-            </button>
-          </div>
-          {wasteTarget === "inventory" ? (
-            <label>
-              Item
-              <select name="itemId" required defaultValue="">
-                <option value="" disabled>Pilih item</option>
-                {countItems.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} · {item.unit}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <label>
-              Batch siap jual
-              <select name="batchId" required defaultValue="">
-                <option value="" disabled>Pilih batch</option>
-                {preparedBatches.map((batch) => (
-                  <option key={batch.id} value={batch.id}>
-                    {batch.name} · {batch.remainingMl} ml tersedia
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label>
-            Jumlah {wasteTarget === "batch" ? "(ml)" : ""}
-            <input
-              name="quantity"
-              type="number"
-              min="0.001"
-              step="0.001"
-              required
-            />
-          </label>
-          <label>
-            Alasan
-            <select name="reason" defaultValue="expired">
-              <option value="expired">Kedaluwarsa</option>
-              <option value="spill">Tumpah</option>
-              <option value="damaged">Rusak</option>
-              <option value="remake">Salah buat / remake</option>
-              <option value="other">Lainnya</option>
-            </select>
-          </label>
-          <label>
-            Catatan (wajib untuk Lainnya)
-            <textarea name="note" rows={2} />
-          </label>
-          <button
-            className={styles.primary}
-            disabled={pending || (wasteTarget === "inventory" ? countItems.length === 0 : preparedBatches.length === 0)}
-          >
-            {pending ? "Menyimpan…" : "Simpan waste"}
-          </button>
-        </form>
-      )}
+              {active === "waste" ? (
+                <>
+                  <div className={styles.wasteChoice} role="group" aria-label="Jenis stok yang dibuang">
+                    <button className={wasteTarget === "inventory" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "inventory"} onClick={() => setWasteTarget("inventory")}>Bahan / kemasan</button>
+                    <button className={wasteTarget === "batch" ? styles.choiceActive : styles.choice} type="button" aria-pressed={wasteTarget === "batch"} onClick={() => setWasteTarget("batch")}>Minuman siap jual</button>
+                  </div>
+                  {wasteTarget === "inventory" ? (
+                    <label>Item yang dibuang
+                      <select name="itemId" required value={selectedWasteId} onChange={(event) => setSelectedWasteId(event.target.value)}>
+                        <option value="" disabled>Pilih bahan atau kemasan</option>
+                        {countItems.map((item) => <option key={item.id} value={item.id}>{item.name} · tersedia {item.systemQuantity} {item.unit}</option>)}
+                      </select>
+                    </label>
+                  ) : (
+                    <label>Batch yang dibuang
+                      <select name="batchId" required value={selectedWasteBatchId} onChange={(event) => setSelectedWasteBatchId(event.target.value)}>
+                        <option value="" disabled>Pilih batch minuman</option>
+                        {preparedBatches.map((batch) => <option key={batch.id} value={batch.id}>{batch.name} · {batch.remainingMl} ml · #{batch.id.slice(0, 6)}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <label>Jumlah dibuang {wasteTarget === "batch" ? "(ml)" : selectedWasteItem ? `(${selectedWasteItem.unit})` : ""}
+                    <input key={`${wasteTarget}:${selectedWasteId}:${selectedWasteBatchId}`} name="quantity" type="number" min={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "1" : "0.001"} step={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "1" : "0.001"} max={wasteTarget === "batch" ? selectedWasteBatch?.remainingMl : selectedWasteItem?.systemQuantity} inputMode={wasteTarget === "batch" || (selectedWasteItem && wholeUnit(selectedWasteItem.unit)) ? "numeric" : "decimal"} placeholder="Masukkan jumlah yang dibuang" required />
+                  </label>
+                  <p className={styles.help}>Masukkan jumlah yang dibuang, bukan sisa stok. {wasteTarget === "batch" ? "Gunakan ml dan pilih batch yang benar." : unitHelp(selectedWasteItem?.unit ?? "")}</p>
+                  <label>Alasan
+                    <select name="reason" defaultValue="" required>
+                      <option value="" disabled>Pilih alasan</option><option value="expired">Kedaluwarsa</option><option value="spill">Tumpah</option><option value="damaged">Rusak</option><option value="remake">Salah buat</option><option value="other">Lainnya</option>
+                    </select>
+                  </label>
+                  <label>Catatan <span className={styles.optional}>(wajib jika memilih Lainnya)</span><textarea name="note" rows={2} maxLength={1000} /></label>
+                </>
+              ) : null}
 
-      {active === "count" && (
-        <form className={styles.form} onSubmit={countSubmit}>
-          <div className={styles.formHeader}>
-            <h3>Stock opname</h3>
-            <button
-              className={styles.close}
-              type="button"
-              onClick={() => setActive(null)}
-              aria-label="Tutup"
-            >
-              ×
-            </button>
-          </div>
-          <label>
-            Jenis opname
-            <select name="mode" defaultValue="daily">
-              <option value="daily">Harian - item penting</option>
-              <option value="full">Penuh - semua item</option>
-            </select>
-          </label>
-          <div className={styles.countList}>
-            {countItems.length ? (
-              countItems.map((item) => (
-                <label key={item.id} className={styles.countRow}>
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>Sistem: {item.systemQuantity} {item.unit} · Selisih: {(countedValues[item.id] ?? item.systemQuantity) - item.systemQuantity} {item.unit}</small>
-                  </span>
-                  <input
-                    name={`count:${item.id}`}
-                    type="number"
-                    min="0"
-                    step="0.001"
-                    defaultValue={item.systemQuantity}
-                    onChange={(event) => setCountedValues((values) => ({ ...values, [item.id]: Number(event.target.value) || 0 }))}
-                    required
-                  />
-                </label>
-              ))
-            ) : (
-              <p className={styles.help}>Item stok belum tersedia.</p>
-            )}
-          </div>
-          <label>
-            Catatan
-            <textarea name="note" rows={2} />
-          </label>
-          <button
-            className={styles.primary}
-            disabled={pending || countItems.length === 0}
-          >
-            {pending ? "Menyimpan…" : "Simpan opname"}
-          </button>
-        </form>
-      )}
+              {active === "count" ? (
+                <>
+                  <label>Jenis pemeriksaan
+                    <select name="mode" defaultValue="daily"><option value="daily">Pemeriksaan harian</option><option value="full">Pemeriksaan lengkap</option></select>
+                  </label>
+                  <p className={styles.help}>Hitung semua bahan dan kemasan pada daftar ini. Isi 0 jika sudah dihitung dan habis. Kedua jenis pemeriksaan mencatat seluruh item di bawah.</p>
+                  <div className={styles.countProgress} role="status">{completedCounts} dari {countSnapshot.length} item sudah diisi</div>
+                  <div className={styles.countList}>
+                    {countSnapshot.map((item) => {
+                      const value = countedValues[item.id] ?? "";
+                      const valid = value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0;
+                      return <label key={item.id} className={styles.countRow}>
+                        <span><strong>{item.name}</strong><small>Stok sistem: {item.systemQuantity} {item.unit}</small><small>{valid ? `Selisih: ${Number(value) - item.systemQuantity} ${item.unit}` : "Belum dihitung"}</small></span>
+                        <span className={styles.countInput}><input name={`count:${item.id}`} aria-label={`Jumlah fisik ${item.name} dalam ${item.unit}`} type="number" min="0" step={wholeUnit(item.unit) ? "1" : "0.001"} inputMode={wholeUnit(item.unit) ? "numeric" : "decimal"} value={value} onChange={(event) => setCountedValues((values) => ({ ...values, [item.id]: event.target.value }))} placeholder="Isi hasil" required /><span>{item.unit}</span></span>
+                      </label>;
+                    })}
+                    {!countSnapshot.length ? <p className={styles.help}>Belum ada stok yang dapat dihitung untuk gerobak ini.</p> : null}
+                  </div>
+                  <p className={styles.help}>Selisih di layar memakai stok saat formulir dibuka. Sistem memeriksa stok terbaru saat menyimpan.</p>
+                  <label>Catatan pemeriksaan <span className={styles.optional}>(opsional)</span><textarea name="note" rows={2} maxLength={1000} /></label>
+                </>
+              ) : null}
 
-      {active === "close" && (
-        <form className={styles.form} onSubmit={closeSubmit}>
-          <div className={styles.formHeader}>
-            <h3>Tutup hari</h3>
-            <button
-              className={styles.close}
-              type="button"
-              onClick={() => setActive(null)}
-              aria-label="Tutup"
-            >
-              ×
-            </button>
-          </div>
-          <label>
-            Tanggal operasional
-            <input
-              name="businessDate"
-              type="date"
-              defaultValue={todayInJakarta()}
-              required
-            />
-          </label>
-          <div className={styles.moneyGrid}>
-            <label>
-              Kas awal
-              <input
-                name="openingCash"
-                type="number"
-                min="0"
-                step="1"
-                defaultValue="0"
-                onChange={(event) => setReconciliationValues((value) => ({ ...value, opening: Number(event.target.value) || 0 }))}
-                required
-              />
-            </label>
-            <label>
-              Kas fisik
-              <input
-                name="actualCash"
-                type="number"
-                min="0"
-                step="1"
-                required
-                onChange={(event) => setReconciliationValues((value) => ({ ...value, cash: Number(event.target.value) || 0 }))}
-              />
-            </label>
-            <label>
-              QRIS aktual
-              <input
-                name="actualQris"
-                type="number"
-                min="0"
-                step="1"
-                required
-                onChange={(event) => setReconciliationValues((value) => ({ ...value, qris: Number(event.target.value) || 0 }))}
-              />
-            </label>
-            <label>
-              Kas masuk lain
-              <input
-                name="otherCashIn"
-                type="number"
-                min="0"
-                step="1"
-                defaultValue="0"
-                onChange={(event) => setReconciliationValues((value) => ({ ...value, other: Number(event.target.value) || 0 }))}
-                required
-              />
-            </label>
-            <label>
-              Refund tunai
-              <input
-                name="cashRefund"
-                type="number"
-                min="0"
-                step="1"
-                defaultValue="0"
-                onChange={(event) => setReconciliationValues((value) => ({ ...value, refund: Number(event.target.value) || 0 }))}
-                required
-              />
-            </label>
-          </div>
-          <div className={styles.reconciliationPreview} aria-live="polite">
-            <strong>Hasil otomatis sebelum simpan</strong>
-            <span>Cash sistem {rupiah.format(expectedCash)} · aktual {rupiah.format(reconciliationValues.cash)} · selisih {rupiah.format(cashVariance)}</span>
-            <span>QRIS dari Loyverse {rupiah.format(expectedQrisSales)} · aktual {rupiah.format(reconciliationValues.qris)} · selisih {rupiah.format(qrisVariance)}</span>
-          </div>
-          <label>
-            Catatan / alasan selisih
-            <textarea name="note" rows={2} />
-          </label>
-          <button className={styles.primary} disabled={pending}>
-            {pending ? "Menyimpan…" : "Simpan rekonsiliasi"}
-          </button>
-        </form>
-      )}
+              {active === "close" ? (
+                <>
+                  <label>Tanggal operasional (WIB)<input name="businessDate" type="date" value={businessDate} readOnly aria-describedby="close-date-help" required /></label>
+                  <p className={styles.help} id="close-date-help">Formulir ini khusus hari ini agar sesuai dengan angka penjualan yang ditampilkan. Hubungi admin untuk meninjau hari sebelumnya.</p>
+                  <div className={styles.moneyGrid}>
+                    <label>Modal tunai awal (Rp)<input name="openingCash" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, opening: Number(event.target.value) || 0 }))} required /></label>
+                    <label>Seluruh uang fisik (Rp)<input name="actualCash" type="number" min="0" step="1" inputMode="numeric" placeholder="Hasil hitung uang, termasuk modal" onChange={(event) => { setReconciliationValues((value) => ({ ...value, cash: Number(event.target.value) || 0 })); setReconciliationEntered((value) => ({ ...value, cash: event.target.value !== "" })); }} required /></label>
+                    <label>QRIS menurut penyedia (Rp)<input name="actualQris" type="number" min="0" step="1" inputMode="numeric" placeholder="Dari laporan QRIS hari ini" onChange={(event) => { setReconciliationValues((value) => ({ ...value, qris: Number(event.target.value) || 0 })); setReconciliationEntered((value) => ({ ...value, qris: event.target.value !== "" })); }} required /></label>
+                    <label>Tunai masuk di luar penjualan (Rp)<input name="otherCashIn" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, other: Number(event.target.value) || 0 }))} required /></label>
+                    <label>Refund tunai di luar POS (Rp)<input name="cashRefund" type="number" min="0" step="1" inputMode="numeric" defaultValue="0" onChange={(event) => setReconciliationValues((value) => ({ ...value, refund: Number(event.target.value) || 0 }))} aria-describedby="refund-help" required /></label>
+                  </div>
+                  <p id="refund-help" className={styles.help}>Refund: isi 0 jika pengembalian dana sudah dicatat di Loyverse. Untuk QRIS, gunakan total sebelum biaya penyedia. Formulir ini belum mencatat pengeluaran usaha.</p>
+                  <div className={styles.reconciliationPreview} aria-live="polite">
+                    <strong>Periksa sebelum menyimpan</strong>
+                    <span>Tunai seharusnya: {rupiah.format(expectedCash)}</span>
+                    <span>Tunai dihitung: {reconciliationEntered.cash ? rupiah.format(reconciliationValues.cash) : "Belum diisi"} · selisih {reconciliationEntered.cash ? rupiah.format(cashVariance) : "—"}</span>
+                    <span>QRIS dari POS: {rupiah.format(expectedQrisSales)}</span>
+                    <span>QRIS menurut penyedia: {reconciliationEntered.qris ? rupiah.format(reconciliationValues.qris) : "Belum diisi"} · selisih {reconciliationEntered.qris ? rupiah.format(qrisVariance) : "—"}</span>
+                    <small>Sistem menghitung ulang dari transaksi terbaru saat menyimpan.</small>
+                  </div>
+                  <label>Catatan / penjelasan selisih<textarea name="note" rows={3} maxLength={1000} required={(reconciliationEntered.cash && cashVariance !== 0) || (reconciliationEntered.qris && qrisVariance !== 0)} placeholder="Jelaskan jika uang tunai atau QRIS berbeda dari angka sistem" /></label>
+                </>
+              ) : null}
+            </fieldset>
+            <div className={styles.formFooter}>
+              <button className={styles.secondary} type="button" disabled={pending} onClick={closeAction}>Batal</button>
+              <button className={styles.primary} type="submit" disabled={cannotSubmit}>{pending ? "Menyimpan…" : submitLabels[active]}</button>
+            </div>
+            {pending ? <p className={styles.help} role="status">Tunggu sampai penyimpanan selesai sebelum menutup formulir.</p> : null}
+          </form>
+        ) : null}
+      </dialog>
     </section>
   );
 }
