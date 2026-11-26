@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import styles from "./operator-home.module.css";
+import { OperatorCashDay } from "./operator-cash-day";
 
 type Destination = "Penjualan" | "Produksi" | "Stok" | "Tutup Hari";
 type Props = { locationId: string; onNavigate?: (view: Destination) => void };
@@ -163,44 +164,91 @@ export function OperatorHome({ locationId, onNavigate }: Props) {
   const anyError = Object.values(errors).some(Boolean);
   const unknownStock = errors.stock || errors.batches;
 
+  const emptyStock = stockAlerts.filter((item) => Number(item.quantity) <= 0);
+  const lowStock = stockAlerts.filter((item) => Number(item.quantity) > 0);
+  const posNeedsCheck = Boolean(syncBehind) || (health !== null && health.length === 0);
+  const showAlerts = anyError || expired.length > 0 || future.length > 0 || stockAlerts.length > 0 || posNeedsCheck;
+  const posTitle = errors.health ? "Status Loyverse belum tersedia" : health === null ? "Memuat status Loyverse…" : !health.length ? "Loyverse belum terhubung" : syncBehind ? "Penjualan mungkin belum lengkap" : "Loyverse tersinkronisasi";
+
   return (
     <div className={`${styles.wrap} ${styles.home}`}>
+      <section className={styles.homeMetrics} aria-label="Ringkasan hari ini">
+        <article className={styles.homeRevenueCompact}>
+          <span>Omzet tercatat hari ini</span>
+          <strong>{sales ? rupiah.format(sales.revenue) : errors.sales ? "Tidak tersedia" : "Memuat…"}</strong>
+          <small>{errors.sales ? sales ? "Belum diperbarui · angka terakhir" : "Periksa koneksi dan perbarui" : "Sebelum pengembalian dana"}</small>
+        </article>
+        <article className={styles.homeMetricCompact}>
+          <span>Gelas tercatat</span>
+          <strong>{sales ? number.format(sales.cups) : "—"}</strong>
+          <small>Termasuk minuman gratis</small>
+        </article>
+        <article className={styles.homeMetricCompact}>
+          <span>Minuman tersedia</span>
+          <strong>{batches ? readyCups : "—"}<small> gelas</small></strong>
+          <small>{errors.batches ? "Belum terverifikasi" : "150 ml / gelas · cek cup & tutup"}</small>
+        </article>
+      </section>
       <div className={styles.homeFreshness} aria-live="polite">
-        <span>{refreshing ? "Memperbarui data…" : readAt ? `Terakhir diperiksa ${time(readAt)}` : anyError ? "Data belum berhasil dimuat." : "Memuat data lokasi…"}</span>
+        <span>{refreshing ? "Memperbarui data…" : readAt ? `Diperiksa ${time(readAt)}` : anyError ? "Data belum berhasil dimuat." : "Memuat data lokasi…"}</span>
         <button type="button" className={styles.taskButton} onClick={() => void load()} disabled={refreshing}>{refreshing ? "Memuat…" : "Perbarui"}</button>
       </div>
-      {anyError ? <section className={styles.warning} role="alert"><strong>Sebagian data belum dapat diperbarui.</strong><p>{unknownStock ? "Status stok belum dapat dipastikan. Periksa kembali sebelum menyiapkan atau menjual minuman." : "Angka terakhir yang tersedia tetap ditampilkan. Coba perbarui lagi."}</p></section> : null}
-      {!unknownStock && (expired.length > 0 || future.length > 0 || stockAlerts.length > 0) ? (
-        <section className={styles.homeAlerts} aria-label="Perlu ditangani">
-          <h2>Perlu dicek dulu</h2>
-          {expired.length ? <div className={styles.homeAlertRow}><div><strong>{expired.length} batch kedaluwarsa</strong><p>{expired.map((batch) => `${batch.recipe_versions?.recipes?.name ?? "Produk"} · ${number.format(Number(batch.remaining_ml))} ml`).join("; ")}. Pisahkan dan catat sebagai terbuang.</p></div>{onNavigate ? <button type="button" className={styles.taskButton} onClick={() => onNavigate("Stok")}>Buka stok</button> : null}</div> : null}
-          {future.length ? <div className={styles.homeAlertRow}><div><strong>{future.length} batch memiliki waktu produksi mendatang</strong><p>Belum dihitung sebagai siap jual. Periksa waktu produksinya.</p></div></div> : null}
-          {stockAlerts.map((item) => <div className={styles.homeAlertRow} key={item.item_id}><div><strong>{item.inventory_items?.name ?? "Bahan"} {Number(item.quantity) <= 0 ? "habis" : "menipis"}</strong><p>Sisa {number.format(Number(item.quantity))} {item.inventory_items?.unit}. Periksa stok fisik dan kebutuhan bahan.</p></div><span className={Number(item.quantity) <= 0 ? styles.homeEmptyTag : styles.homeLowTag}>{Number(item.quantity) <= 0 ? "Habis" : "Menipis"}</span></div>)}
-        </section>
+      {showAlerts ? (
+        <details className={styles.homeAlertDetails} aria-label="Perlu ditangani">
+          <summary>
+            <span className={styles.homeAlertSummary} aria-live="polite">
+              {expired.length > 0 ? <strong>{expired.length} batch kedaluwarsa. Jangan dijual.</strong> : null}
+              {unknownStock ? <span>Stok belum terverifikasi.</span> : null}
+              {emptyStock.length > 0 ? <span>{emptyStock.length} bahan / kemasan habis.</span> : null}
+              {lowStock.length > 0 ? <span>{lowStock.length} stok menipis.</span> : null}
+              {future.length > 0 ? <span>{future.length} waktu batch perlu dicek.</span> : null}
+              {errors.sales || errors.health || posNeedsCheck ? <span>Penjualan perlu diperiksa.</span> : null}
+            </span>
+            <span className={styles.homeDetailHint}>Detail</span>
+          </summary>
+          <div className={styles.homeAlertBody}>
+            {anyError ? <div className={styles.homeAlertRow} role="alert"><div><strong>Sebagian data belum dapat diperbarui.</strong><p>{unknownStock ? "Status stok belum dapat dipastikan. Periksa kembali sebelum menyiapkan atau menjual minuman." : "Angka terakhir yang tersedia tetap ditampilkan. Coba perbarui lagi."}</p></div></div> : null}
+            {expired.length > 0 ? <div className={styles.homeAlertRow}><div><strong>{expired.length} batch kedaluwarsa</strong><p>{expired.map((batch) => `${batch.recipe_versions?.recipes?.name ?? "Produk"} · ${number.format(Number(batch.remaining_ml))} ml`).join("; ")}. Pisahkan dan catat sebagai terbuang.</p></div>{onNavigate ? <button type="button" className={styles.taskButton} onClick={() => onNavigate("Stok")}>Buka stok</button> : null}</div> : null}
+            {future.length > 0 ? <div className={styles.homeAlertRow}><div><strong>Waktu produksi belum sesuai</strong><p>{future.length} batch bertanggal mendatang, sehingga belum dihitung sebagai minuman tersedia.</p></div></div> : null}
+            {stockAlerts.map((item) => <div className={styles.homeAlertRow} key={item.item_id}><div><strong>{item.inventory_items?.name ?? "Bahan"} {Number(item.quantity) <= 0 ? "habis" : "menipis"}</strong><p>Sisa {number.format(Number(item.quantity))} {item.inventory_items?.unit}. Periksa stok fisik dan kebutuhan bahan.</p></div><span className={Number(item.quantity) <= 0 ? styles.homeEmptyTag : styles.homeLowTag}>{Number(item.quantity) <= 0 ? "Habis" : "Menipis"}</span></div>)}
+            {errors.sales || errors.health || posNeedsCheck ? <div className={styles.homeAlertRow}><div><strong>{posTitle}</strong><p>{lastSync ? `Sinkronisasi berhasil terakhir ${time(lastSync)}.` : "Belum ada sinkronisasi berhasil yang dapat ditampilkan."} Periksa sebelum tutup hari.</p></div></div> : null}
+          </div>
+        </details>
       ) : null}
       {onNavigate ? <nav className={styles.homeActions} aria-label="Aksi cepat"><button type="button" onClick={() => onNavigate("Produksi")}><strong>Buat batch</strong><span>900 ml · 6 gelas</span></button><button type="button" onClick={() => onNavigate("Stok")}><strong>Kelola stok</strong><span>Terima, hitung, terbuang</span></button></nav> : null}
-      <section className={styles.homeRevenue} aria-label="Penjualan tercatat hari ini">
-        <span>Omzet tercatat hari ini</span>
-        <strong>{sales ? rupiah.format(sales.revenue) : errors.sales ? "Tidak tersedia" : "Memuat…"}</strong>
-        <div className={styles.homeSalesMeta}><div><span>Gelas tercatat</span><b>{sales ? number.format(sales.cups) : "—"}</b></div><div><span>Tunai</span><b>{sales ? rupiah.format(sales.cash) : "—"}</b></div><div><span>QRIS</span><b>{sales ? rupiah.format(sales.qris) : "—"}</b></div></div>
-        <p>{errors.sales ? "Belum berhasil diperbarui. " : ""}Dari Loyverse, termasuk minuman gratis. Omzet sebelum pengembalian dana.</p>
-        {onNavigate ? <button type="button" onClick={() => onNavigate("Penjualan")}>Lihat penjualan</button> : null}
-      </section>
-      <section className={styles.panel} aria-label="Minuman tersedia">
-        <div className={styles.panelHead}><div><h2>Minuman tersedia</h2><p>Porsi 150 ml. Periksa cup dan tutup sebelum menjual.</p></div><strong className={styles.homeReadyTotal}>{batches ? readyCups : "—"}<span> gelas</span></strong></div>
-        {errors.batches ? <p className={styles.warning}>Data batch belum diperbarui. Jumlah siap jual perlu diperiksa kembali.</p> : null}
-        {!batches ? <p className={styles.empty}>{errors.batches ? "Data batch tidak tersedia." : "Memuat minuman…"}</p> : drinksReady.length ? drinksReady.map((drink) => <div className={styles.row} key={drink.name}><div><strong>{drink.name}</strong><small>{number.format(drink.ml)} ml · sisa di luar porsi {number.format(drink.ml % 150)} ml</small><small>Gunakan sebelum {time(drink.useBy)}</small></div><div className={styles.quantity}><strong>{Math.floor(drink.ml / 150)} gelas</strong><small>{drink.batches} batch · FIFO</small></div></div>) : <div className={styles.empty}>Belum ada minuman siap jual. Siapkan bahan, lalu catat produksi.</div>}
-      </section>
-      <section className={styles.panel}>
-        <div className={styles.panelHead}><div><h2>Bahan & kemasan</h2><p>Jumlah sistem. Cocokkan dengan hitungan fisik.</p></div></div>
-        {errors.stock ? <p className={styles.warning}>Stok belum diperbarui. Periksa jumlah fisik sebelum produksi.</p> : null}
-        {!rawStock ? <p className={styles.empty}>{errors.stock ? "Data stok tidak tersedia." : "Memuat stok…"}</p> : rawStock.length ? rawStock.map((item) => <div className={styles.row} key={item.item_id}><div><strong>{item.inventory_items?.name ?? "Bahan"}</strong><small>{item.inventory_items?.category === "packaging" ? "Kemasan" : "Bahan produksi"}{Number(item.quantity) <= 0 ? " · Habis" : ""}</small></div><div className={styles.quantity}><strong>{number.format(Number(item.quantity))} {item.inventory_items?.unit}</strong></div></div>) : <p className={styles.empty}>Belum ada stok tercatat. Catat bahan yang diterima melalui menu Stok.</p>}
-      </section>
-      <section className={styles.homePos} aria-label="Status sinkronisasi">
-        <strong>{errors.health ? "Status Loyverse belum tersedia" : health === null ? "Memuat status Loyverse…" : !health.length ? "Loyverse belum terhubung" : syncBehind ? "Penjualan mungkin belum lengkap" : "Loyverse tersinkronisasi"}</strong>
-        <p>{lastSync ? `Sinkronisasi berhasil terakhir ${time(lastSync)}.` : "Belum ada waktu sinkronisasi berhasil yang dapat ditampilkan."} {syncBehind ? "Periksa koneksi dan perbarui sebelum tutup hari." : "Penjualan tetap dicatat di aplikasi Loyverse."}</p>
-        {onNavigate ? <button type="button" className={styles.taskButton} onClick={() => onNavigate("Tutup Hari")}>Tutup hari</button> : null}
-      </section>
+      <OperatorCashDay compact locationId={locationId} onCommitted={() => { void load(); }} />
+      <details className={styles.homeDetails} aria-label="Minuman tersedia">
+        <summary><span>Minuman per menu</span><small>{batches ? `${readyCups} gelas tersedia` : "Belum dimuat"}</small></summary>
+        <div className={styles.homeDetailsBody}>
+          <p className={styles.homeSecondaryNote}>Porsi 150 ml. Periksa cup dan tutup sebelum menjual.</p>
+          {errors.batches ? <p className={styles.warning}>Data batch belum diperbarui. Jumlah minuman perlu diperiksa kembali.</p> : null}
+          {!batches ? <p className={styles.empty}>{errors.batches ? "Data batch tidak tersedia." : "Memuat minuman…"}</p> : drinksReady.length ? drinksReady.map((drink) => <div className={styles.row} key={drink.name}><div><strong>{drink.name}</strong><small>{number.format(drink.ml)} ml · sisa di luar porsi {number.format(drink.ml % 150)} ml</small><small>Gunakan sebelum {time(drink.useBy)}</small></div><div className={styles.quantity}><strong>{Math.floor(drink.ml / 150)} gelas</strong><small>{drink.batches} batch · FIFO</small></div></div>) : <div className={styles.empty}>Belum ada minuman tersedia. Siapkan bahan, lalu catat produksi.</div>}
+        </div>
+      </details>
+      <details className={styles.homeDetails} aria-label="Bahan dan kemasan">
+        <summary><span>Bahan & kemasan</span><small>{rawStock ? `${rawStock.length} item` : "Belum dimuat"}</small></summary>
+        <div className={styles.homeDetailsBody}>
+          <p className={styles.homeSecondaryNote}>Jumlah sistem. Cocokkan dengan hitungan fisik.</p>
+          {errors.stock ? <p className={styles.warning}>Stok belum diperbarui. Periksa jumlah fisik sebelum produksi.</p> : null}
+          {!rawStock ? <p className={styles.empty}>{errors.stock ? "Data stok tidak tersedia." : "Memuat stok…"}</p> : rawStock.length ? rawStock.map((item) => <div className={styles.row} key={item.item_id}><div><strong>{item.inventory_items?.name ?? "Bahan"}</strong><small>{item.inventory_items?.category === "packaging" ? "Kemasan" : "Bahan produksi"}{Number(item.quantity) <= 0 ? " · Habis" : ""}</small></div><div className={styles.quantity}><strong>{number.format(Number(item.quantity))} {item.inventory_items?.unit}</strong></div></div>) : <p className={styles.empty}>Belum ada stok tercatat. Catat bahan yang diterima melalui menu Stok.</p>}
+        </div>
+      </details>
+      <details className={styles.homeDetails} aria-label="Rincian penjualan">
+        <summary><span>Rincian penjualan</span><small>Tunai & QRIS</small></summary>
+        <div className={styles.homeDetailsBody}>
+          <div className={styles.row}><strong>Tunai</strong><span>{sales ? rupiah.format(sales.cash) : "—"}</span></div>
+          <div className={styles.row}><strong>QRIS</strong><span>{sales ? rupiah.format(sales.qris) : "—"}</span></div>
+          <p className={styles.homeSecondaryNote}>Dari Loyverse, termasuk minuman gratis. Omzet sebelum pengembalian dana. {errors.sales ? "Angka belum berhasil diperbarui." : ""}</p>
+          {onNavigate ? <button type="button" className={styles.taskButton} onClick={() => onNavigate("Penjualan")}>Lihat penjualan</button> : null}
+        </div>
+      </details>
+      <details className={styles.homeDetails} aria-label="Status sinkronisasi">
+        <summary><span>{posTitle}</span><small>{lastSync ? time(lastSync) : "Detail koneksi"}</small></summary>
+        <div className={styles.homeDetailsBody}>
+          <p className={styles.homeSecondaryNote}>{lastSync ? `Sinkronisasi berhasil terakhir ${time(lastSync)}.` : "Belum ada waktu sinkronisasi berhasil yang dapat ditampilkan."} Penjualan tetap dicatat di aplikasi Loyverse. {syncBehind ? "Periksa koneksi dan perbarui sebelum tutup hari." : ""}</p>
+          {onNavigate ? <button type="button" className={styles.taskButton} onClick={() => onNavigate("Tutup Hari")}>Tutup hari</button> : null}
+        </div>
+      </details>
     </div>
   );
 }

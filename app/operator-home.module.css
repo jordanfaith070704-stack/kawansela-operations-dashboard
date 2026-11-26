@@ -315,3 +315,42 @@
 .wrap .recipeMetrics,.wrap .recipeCards,.wrap .recapNumbers { min-width:0; }
 .wrap .recipeMetrics strong,.wrap .ingredientList strong { overflow-wrap:anywhere; }
 .wrap .warning p { color:inherit; font-size:1rem; }
+
+/* Compact operator start screen: figures, alert strip, then the two daily tasks. */
+.home { gap:12px; }
+.homeMetrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.homeRevenueCompact { grid-column:1 / -1; padding:16px 18px; border-radius:15px; background:var(--home-green); color:white; }
+.homeRevenueCompact > span,.homeMetricCompact > span { display:block; font-size:.875rem; font-weight:650; }
+.homeRevenueCompact > strong { display:block; font-size:clamp(1.7rem,6vw,2.1rem); line-height:1.2; font-weight:800; margin:5px 0 3px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.homeRevenueCompact > small { display:block; font-size:.8125rem; color:#f0f5e9; }
+.homeMetricCompact { min-width:0; padding:13px 15px; border:1px solid var(--home-line); border-radius:14px; background:var(--home-paper); }
+.homeMetricCompact > strong { display:block; margin:4px 0 3px; font-size:1.75rem; line-height:1.2; font-weight:800; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.homeMetricCompact > strong > small { font-size:.875rem; font-weight:500; }
+.homeMetricCompact > small { display:block; font-size:.8125rem; line-height:1.4; color:var(--home-muted); }
+.homeFreshness { font-size:.8125rem; gap:10px; }
+.homeFreshness .taskButton { padding:9px 12px; font-size:.875rem; }
+.homeAlertDetails { border:1px solid #d4b376; border-radius:13px; background:#fff3d6; color:#623b00; overflow:hidden; }
+.homeAlertDetails > summary { min-height:58px; display:flex; align-items:center; gap:12px; padding:12px 14px; cursor:pointer; list-style:none; }
+.homeAlertDetails > summary::-webkit-details-marker,.homeDetails > summary::-webkit-details-marker { display:none; }
+.homeAlertDetails > summary::marker,.homeDetails > summary::marker { content:""; }
+.homeAlertSummary { display:flex; flex-wrap:wrap; gap:3px 8px; min-width:0; flex:1; font-size:.875rem; line-height:1.45; }
+.homeAlertSummary strong { display:block; width:100%; color:#8d2b1a; font-size:.9375rem; }
+.homeDetailHint { flex:none; text-decoration:underline; text-underline-offset:3px; font-weight:750; font-size:.875rem; }
+.homeAlertDetails[open] .homeDetailHint::after { content:" −"; }
+.homeAlertDetails:not([open]) .homeDetailHint::after { content:" +"; }
+.homeAlertBody { padding:0 14px 13px; border-top:1px solid #dfc794; }
+.homeAlertBody .homeAlertRow:first-child { padding-top:12px; }
+.homeAlertDetails > summary:focus-visible,.homeDetails > summary:focus-visible { outline:3px solid var(--home-green); outline-offset:-4px; border-radius:11px; }
+.homeActions button { min-height:78px; padding:13px 14px; }
+.homeDetails { min-width:0; background:var(--home-paper); border:1px solid var(--home-line); border-radius:13px; overflow:hidden; }
+.homeDetails > summary { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:5px 12px; min-height:64px; padding:15px 16px; cursor:pointer; list-style:none; }
+.homeDetails > summary > span { font-size:1rem; font-weight:750; flex:1 1 155px; }
+.homeDetails > summary > small { font-size:.8125rem; color:var(--home-muted); }
+.homeDetails > summary::after { content:"+"; font-size:1.25rem; font-weight:750; color:var(--home-green); }
+.homeDetails[open] > summary::after { content:"−"; }
+.homeDetailsBody { padding:0 16px 16px; border-top:1px solid var(--home-line); }
+.homeSecondaryNote { margin:13px 0; font-size:.875rem; line-height:1.55; color:var(--home-muted); }
+.homeDetailsBody .warning { font-size:.875rem; padding:12px; margin:12px 0; }
+@media(min-width:760px) { .homeMetrics { grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr)); } .homeRevenueCompact { grid-column:auto; } }
+.panel > summary,.warning summary { min-height:48px; align-content:center; font-size:1rem; line-height:1.5; font-weight:750; cursor:pointer; }
+.panel > summary:focus-visible,.warning summary:focus-visible { outline:3px solid var(--green,#244d36); outline-offset:4px; border-radius:4px; }

@@ -104,3 +104,8 @@
 }
 @media (max-width: 360px) { .countRow { grid-template-columns: 1fr; } .countInput { max-width: 190px; } }
 @media (prefers-reduced-motion: reduce) { .primary:hover:not(:disabled) { filter: none; } }
+
+.quantityGrid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.conversionPreview { padding: 12px 14px; border: 1px solid #b5c5ac; border-radius: 10px; background: #e8eee3; color: #244d36; font-size: 15px; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.conversionError { border-color: #cf9d8d; background: #fff0eb; color: #76281b; }
